@@ -44,6 +44,21 @@ LEDGER GUARD: ./.workflow/LEDGER.md still has 8 open item(s):
 If you are CLOSING a workflow: address each item and mark it '- [x]' ...
 ```
 
+## Using a top-tier model (Fable 5, Opus) without draining your limit
+
+This setup was born from a specific pain: running **Claude Fable 5** as the session model and watching the usage limit evaporate — not on hard decisions, but on bulk work the top tier never needed to do itself.
+
+With the plugin installed, the division of labor becomes:
+
+- **Your session model (Fable/Opus) spends tokens only on judgment** — writing the Requirements Ledger, speccing phases, arbitrating conflicts, judging subagent returns, final synthesis.
+- **Everything bulky runs on cheaper tiers** — `haiku` fetches and scans, `sonnet` implements from specs, `opus` handles delegated judgment. Those tokens drain your limit far more slowly than top-tier tokens do.
+- **Your session context stays small**, so long sessions avoid the compaction cliff where details silently vanish — a quality win on top of the limit win.
+
+Two honest caveats:
+
+- **Total tokens across all models go up.** Delegation duplicates some reading (subagents re-read material from disk). What drops — dramatically — is the *top-tier share* of consumption, which is what your limit actually cares about.
+- This is not a "make everything cheap" tool; it's a "spend the scarce resource only where being smartest matters" tool. For small bounded tasks the instructions tell the orchestrator to skip delegation entirely (Rule 0) — orchestration overhead would exceed the work itself.
+
 ## Install
 
 ```
