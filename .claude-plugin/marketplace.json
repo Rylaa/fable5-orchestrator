@@ -1,0 +1,15 @@
+{
+  "name": "claude-code-orchestrator",
+  "description": "Token-frugal multi-agent orchestration for Claude Code: model-tier routing, a Requirements Ledger, and guard hooks that enforce it.",
+  "owner": {
+    "name": "Yusuf Demirkoparan",
+    "url": "https://github.com/Rylaa"
+  },
+  "plugins": [
+    {
+      "name": "orchestrator",
+      "source": "./",
+      "description": "Token-frugal multi-agent orchestration for Claude Code: model-tier routing, a Requirements Ledger against silent detail loss, and guard hooks that enforce the discipline mechanically."
+    }
+  ]
+}
