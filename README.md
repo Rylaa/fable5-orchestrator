@@ -1,6 +1,6 @@
-# Claude Code Orchestrator
+# Fable Orchestrator
 
-Token-frugal multi-agent orchestration for Claude Code — model-tier routing, a **Requirements Ledger** against silent detail loss, and **guard hooks** that enforce the discipline mechanically.
+Keep **Claude Fable 5** (or Opus) as your daily driver without draining your usage limit. Token-frugal multi-agent orchestration for Claude Code — model-tier routing, a **Requirements Ledger** against silent detail loss, and **guard hooks** that enforce the discipline mechanically.
 
 ## The problem
 
@@ -62,8 +62,8 @@ Two honest caveats:
 ## Install
 
 ```
-/plugin marketplace add Rylaa/claude-code-orchestrator
-/plugin install orchestrator@claude-code-orchestrator
+/plugin marketplace add Rylaa/fable-orchestrator
+/plugin install orchestrator@fable-orchestrator
 ```
 
 Requires `python3` on PATH (present by default on macOS and most Linux distros).
