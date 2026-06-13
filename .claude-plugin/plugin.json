@@ -1,7 +1,7 @@
 {
   "name": "orchestrator",
-  "description": "Keep Fable 5 (or Opus) as your daily driver without draining your usage limit: model-tier routing, a Requirements Ledger against silent detail loss, and guard hooks that enforce the discipline mechanically.",
-  "version": "0.1.2",
+  "description": "Model-aware multi-agent orchestration for Claude Code. On Fable: token-frugal delegation to preserve the usage limit. On Opus/other: a latency-lean profile that keeps the quality guarantees (Requirements Ledger + verification) but spends ceremony proportionally. Auto-detects the session model and injects the right profile; guard hooks enforce the discipline mechanically.",
+  "version": "0.2.0",
   "author": {
     "name": "Yusuf Demirkoparan",
     "url": "https://github.com/Rylaa"

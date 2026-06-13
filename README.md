@@ -1,36 +1,43 @@
 # Fable Orchestrator
 
-Keep **Claude Fable 5** (or Opus) as your daily driver without draining your usage limit. Token-frugal multi-agent orchestration for Claude Code — model-tier routing, a **Requirements Ledger** against silent detail loss, and **guard hooks** that enforce the discipline mechanically.
+Model-aware multi-agent orchestration for Claude Code. It detects the model in the session chair and injects the orchestration profile that fits it: **token-frugal** when you're on **Fable**, **latency-lean** when you're on **Opus 4.8** (or any other model). Both profiles keep the same quality guarantees — a **Requirements Ledger** against silent detail loss and a verification pass — and both are backed by **guard hooks** that enforce the discipline mechanically.
 
 ## The problem
 
-Running a top-tier model (Opus, Fable) as your daily driver burns through context and usage limits fast — and most of those tokens go to bulk work (reading files, fetching pages, grinding logs) that a cheaper tier handles just as well. The obvious fix is delegating to subagents.
+Delegating bulk work to subagents is the right move when your session model is an ultra-scarce top tier (Fable): it preserves the usage limit and keeps the session context small. But that same heavy discipline — mandatory ledger before any delegation, sequential research relays, a fresh re-read verification pass on every close, disk hand-offs between every stage — is tuned to trade **wall-clock latency** for **top-tier token frugality**.
 
-But naive delegation has a failure mode worse than the cost it saves: **silent detail loss**. Requirements vanish at the task→plan translation step, subagents return confident summaries, and nobody notices what got dropped until it ships broken.
+Run it under **Opus 4.8**, with its 1M-token context window and top-tier judgment+implementation in the chair, and the trade inverts. Opus tokens aren't the scarce resource you're protecting; the **clock** is. The ceremony that saves Fable's limit just makes Opus *slow* — for a benefit it no longer needs. The fix isn't "less discipline," it's "the right discipline for who's in the chair."
 
-And the deeper issue: workflow instructions in CLAUDE.md are *advice*, not *mechanism*. The model follows them probabilistically — and the two rules that matter most are exactly the ones that get skipped under pressure.
+And the deeper issue stays the same across both: workflow instructions in CLAUDE.md are *advice*, not *mechanism*. The two rules that matter most — write the ledger, finish it before closing — are exactly the ones that get skipped under pressure. Hooks make them mechanical.
 
 ## What this plugin does
 
 Three layers:
 
-1. **Orchestration instructions** — injected at every session start (no CLAUDE.md editing needed). Your session model plans, delegates by model tier (`haiku` → mechanical, `sonnet` → implementation, `opus` → judgment), verifies with fresh eyes, and arbitrates. It stops spending its own context on bulk work. See [`instructions/dynamic-workflow.md`](instructions/dynamic-workflow.md).
+1. **Model-aware orchestration instructions** — injected at every session start (no CLAUDE.md editing needed). The SessionStart hook reads the session model and injects one of two profiles:
 
-2. **A Requirements Ledger** — before any delegation, the orchestrator writes every explicit requirement, implicit expectation, constraint, and edge case as a checkbox line to `./.workflow/LEDGER.md`. Files survive context compaction; conversation context does not. Detail loss becomes *visible* instead of silent.
+   | Profile | Injected when | Optimizes for | Behavior |
+   |---|---|---|---|
+   | [`dynamic-workflow-fable.md`](instructions/dynamic-workflow-fable.md) | session model is **Fable** | usage limit | Delegate aggressively; bulk work to cheaper tiers; mandatory ledger + fresh-eyes verification. Accepts latency to keep the top-tier token share low. |
+   | [`dynamic-workflow-opus.md`](instructions/dynamic-workflow-opus.md) | **any other** model (Opus 4.8, Sonnet…) | wall-clock latency | Do bounded/medium work **inline**; delegate only to buy **parallelism** or to keep bulk out of context; ledger and verification **proportional** to size and risk; parallel fan-out (`Workflow` `pipeline()`/`parallel()`) over sequential relays. |
+
+   Both route subagents by tier (`haiku` → mechanical, `sonnet` → implementation, `opus` → judgment) and both treat the filesystem as shared memory. The Opus profile just stops spending latency where it no longer buys quality.
+
+2. **A Requirements Ledger** — every explicit requirement, implicit expectation, constraint, and edge case as a checkbox line. Files survive context compaction; conversation context does not. On Fable the ledger is written before *any* delegation. On Opus it's **proportional**: an inline checklist for small/medium work, a `./.workflow/LEDGER.md` file for large/multi-session/high-risk work. Either way, detail loss becomes *visible* instead of silent.
 
 3. **Two guard hooks** — they convert the two most-skipped rules from "should" into "must":
 
 | Guard | Trigger | Effect |
 |---|---|---|
-| **Spawn guard** (`PreToolUse` on `Agent\|Task`) | A detailed delegation (spawn prompt > 1500 chars) while `./.workflow/LEDGER.md` doesn't exist | The spawn is denied, with instructions fed back to the model: write the ledger first, or do small tasks directly. Short prompts (quick search agents) always pass. |
-| **Close guard** (`Stop`) | The turn ends while the ledger has open `- [ ]` items | The stop is blocked once and the open items are listed. `- [x]` (done + verified) and `- [~] deferred: <reason>` count as closed. A `stop_hook_active` check prevents infinite loops. |
+| **Spawn guard** (`PreToolUse` on `Agent\|Task`) | A detailed delegation (spawn prompt over the threshold) while `./.workflow/LEDGER.md` doesn't exist | The spawn is denied; the model is told to write the ledger first, or do small tasks directly. The threshold is **model-aware**: strict on Fable (`1500`), relaxed on Opus (`4000`) so ordinary fan-out isn't taxed. Short prompts always pass. |
+| **Close guard** (`Stop`) | The turn ends while the ledger has open `- [ ]` items | The stop is blocked once and the open items are listed. `- [x]` (done + verified) and `- [~] deferred: <reason>` count as closed. A `stop_hook_active` check prevents infinite loops. On Opus, small tasks have no file ledger, so this simply never fires for them. |
 
 ### What it looks like in practice
 
-A detailed delegation without a ledger gets bounced back to the model:
+A detailed delegation without a ledger gets bounced back to the model (threshold shown reflects the active profile):
 
 ```
-LEDGER GUARD: this looks like a detailed delegation (spawn prompt > 1500 chars)
+LEDGER GUARD: this looks like a detailed delegation (spawn prompt > 4000 chars)
 but ./.workflow/LEDGER.md does not exist. Per Dynamic Workflow Rule 1, first
 write the numbered Requirements Ledger ...
 ```
@@ -44,20 +51,19 @@ LEDGER GUARD: ./.workflow/LEDGER.md still has 8 open item(s):
 If you are CLOSING a workflow: address each item and mark it '- [x]' ...
 ```
 
-## Using a top-tier model (Fable 5, Opus) without draining your limit
+## Why the Opus profile is faster (at the same quality)
 
-This setup was born from a specific pain: running **Claude Fable 5** as the session model and watching the usage limit evaporate — not on hard decisions, but on bulk work the top tier never needed to do itself.
+The Fable profile's latency sinks, and what the Opus profile does about each — without dropping a quality guarantee:
 
-With the plugin installed, the division of labor becomes:
+| Fable profile (kept on Fable) | Opus profile (latency-lean) |
+|---|---|
+| Mandatory ledger file before any delegation | **Proportional**: inline checklist for small/medium, file for large/high-risk |
+| Sequential research relay (you→haiku→opus→opus→you) | **Parallel** `pipeline()`: each source flows fetch→read→brief with no barrier; wall-clock = slowest single chain |
+| Mandatory fresh-eyes re-read on every close | **Risk-gated**: fresh-eyes pass for high-risk work; inline tests + self-review for ordinary changes |
+| Disk hand-off (write all to scratch, then read all) between stages | **Conditional**: only genuinely bulky material goes to disk; everything else returns inline |
+| Offload everything to "protect" the chair | **Inline-first**: the chair is Opus-class — it does judgment and bounded implementation directly; delegate only for parallelism or bulk |
 
-- **Your session model (Fable/Opus) spends tokens only on judgment** — writing the Requirements Ledger, speccing phases, arbitrating conflicts, judging subagent returns, final synthesis.
-- **Everything bulky runs on cheaper tiers** — `haiku` fetches and scans, `sonnet` implements from specs, `opus` handles delegated judgment. Those tokens drain your limit far more slowly than top-tier tokens do.
-- **Your session context stays small**, so long sessions avoid the compaction cliff where details silently vanish — a quality win on top of the limit win.
-
-Two honest caveats:
-
-- **Total tokens across all models go up.** Delegation duplicates some reading (subagents re-read material from disk). What drops — dramatically — is the *top-tier share* of consumption, which is what your limit actually cares about.
-- This is not a "make everything cheap" tool; it's a "spend the scarce resource only where being smartest matters" tool. For small bounded tasks the instructions tell the orchestrator to skip delegation entirely (Rule 0) — orchestration overhead would exceed the work itself.
+The anti-detail-loss ledger and the verification pass both survive — they're just spent *proportionally* instead of flat on every task.
 
 ## Install
 
@@ -66,9 +72,11 @@ Two honest caveats:
 /plugin install orchestrator@fable-orchestrator
 ```
 
-Requires `python3` on PATH (present by default on macOS and most Linux distros).
+Requires `python3` on PATH (present by default on macOS and most Linux distros). Model auto-detection works out of the box — no configuration needed.
 
 ### Manual install (without the plugin system)
+
+Manual install can't auto-detect the model (the SessionStart injector is plugin-only), so you pick the profile that matches your daily driver.
 
 1. Copy `scripts/ledger_guard_spawn.py` and `scripts/ledger_guard_stop.py` to `~/.claude/hooks/`.
 2. Merge this into `~/.claude/settings.json`:
@@ -95,7 +103,8 @@ Requires `python3` on PATH (present by default on macOS and most Linux distros).
 }
 ```
 
-3. Append `instructions/dynamic-workflow.md` to your `~/.claude/CLAUDE.md`.
+3. Append the profile that matches your daily model to `~/.claude/CLAUDE.md`: `instructions/dynamic-workflow-opus.md` (recommended for Opus 4.8) or `instructions/dynamic-workflow-fable.md` (for Fable).
+4. Manual installs have no per-session model cache, so the spawn guard defaults to the relaxed Opus threshold (`4000`). To force the strict Fable gate, set `LEDGER_GUARD_THRESHOLD=1500` (see Configuration).
 
 > Don't run the plugin AND the manual install side by side — you'd get every guard twice.
 
@@ -114,14 +123,20 @@ A paused project keeps its open ledger, so the close guard adds one acknowledgme
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `LEDGER_GUARD_THRESHOLD` | `1500` | Spawn-prompt length (chars) above which a delegation requires a ledger. Raise it if legitimate quick agents get blocked; lower it if big delegations slip under. |
+| `FABLE_ORCH_PROFILE` | `auto` | Which profile to inject: `auto` (detect from the session model), `fable` (force token-frugal), or `opus` (force latency-lean). |
+| `LEDGER_GUARD_THRESHOLD` | _(unset)_ | Hard override for the spawn-guard threshold (chars), applied to **every** profile. Set it to pin a single value regardless of model. |
+| `LEDGER_GUARD_THRESHOLD_FABLE` | `1500` | Spawn-guard threshold under the Fable profile (used when the hard override is unset). |
+| `LEDGER_GUARD_THRESHOLD_OPUS` | `4000` | Spawn-guard threshold under the Opus profile (used when the hard override is unset). |
 
-Set it in `~/.claude/settings.json` under `"env"`.
+Set these in `~/.claude/settings.json` under `"env"`.
+
+**How model detection works.** Claude Code passes the selected model to the `SessionStart` hook as a top-level `model` string. The injector resolves the profile from it and caches `{model, profile}` to a per-session file in the temp dir. The `PreToolUse`/`Stop` guards don't receive the model, so they read that cache to pick the right threshold. If the model is absent or unknown, the plugin defaults to the lean Opus profile — the heavy Fable discipline never runs silently on a non-Fable model.
 
 ## What this does NOT do (honest limitations)
 
 - **Hooks check ledger existence and checkbox state — not ledger fidelity.** A shallow ledger passes both gates. Writing a faithful ledger remains a judgment task, which is exactly why the instructions assign it to your smartest model, not a subagent.
 - **Marking `- [x]` without actually verifying is possible.** The instructions say "verify first"; no hook can tell the difference. Mechanizing this further (e.g. mandatory verification stamps) invites ritual compliance — we deliberately stopped here.
+- **Detection keys on the model string.** Anything containing `fable` (case-insensitive) gets the Fable profile; everything else gets the lean profile. Force it with `FABLE_ORCH_PROFILE` if your setup needs otherwise.
 - **The orchestration discipline itself is still prompt-level.** The hooks fence exactly two failure points — the two that, in practice, get skipped the most: delegating without a ledger, and closing without finishing.
 
 ## Why these two hooks

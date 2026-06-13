@@ -1,6 +1,6 @@
 {
   "name": "fable-orchestrator",
-  "description": "Keep Fable 5 (or Opus) as your daily driver without draining your usage limit: token-frugal multi-agent orchestration for Claude Code with model-tier routing, a Requirements Ledger, and guard hooks that enforce it.",
+  "description": "Model-aware multi-agent orchestration for Claude Code: auto-detects the session model and injects a Fable (token-frugal) or Opus (latency-lean) profile, with a Requirements Ledger and guard hooks that enforce the discipline mechanically.",
   "owner": {
     "name": "Yusuf Demirkoparan",
     "url": "https://github.com/Rylaa"
@@ -9,7 +9,7 @@
     {
       "name": "orchestrator",
       "source": "./",
-      "description": "Token-frugal multi-agent orchestration for Claude Code: model-tier routing, a Requirements Ledger against silent detail loss, and guard hooks that enforce the discipline mechanically."
+      "description": "Model-aware multi-agent orchestration: a Fable token-frugal profile and an Opus latency-lean profile, auto-selected from the session model, plus a Requirements Ledger and guard hooks that enforce the discipline mechanically."
     }
   ]
 }
