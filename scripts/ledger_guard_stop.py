@@ -19,14 +19,16 @@ def find_ledger(start_dir):
     """Path of .workflow/LEDGER.md from start_dir up to the repo root.
 
     Mirrors the spawn guard's walk: stops at the first directory that
-    contains .git, or at the filesystem root.
+    contains .git, or at the filesystem root. .git is checked with
+    os.path.exists, not isdir — in worktrees and submodules .git is a
+    FILE, and the boundary must hold there too.
     """
     d = os.path.abspath(start_dir or os.getcwd())
     while True:
         candidate = os.path.join(d, ".workflow", "LEDGER.md")
         if os.path.isfile(candidate):
             return candidate
-        if os.path.isdir(os.path.join(d, ".git")):
+        if os.path.exists(os.path.join(d, ".git")):
             return None
         parent = os.path.dirname(d)
         if parent == d:

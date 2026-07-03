@@ -53,5 +53,15 @@ def test_upward_search_stops_at_repo_root(tmp_path):
     assert run_hook(SCRIPT, stop_payload(repo)) is None
 
 
+def test_upward_search_stops_at_worktree_boundary(tmp_path):
+    # .git as a FILE (worktree/submodule) is a boundary too: the open
+    # ledger above it must not block a stop inside the worktree.
+    write_ledger(tmp_path, "- [ ] 1. outside\n")
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
+    assert run_hook(SCRIPT, stop_payload(worktree)) is None
+
+
 def test_malformed_input_passes():
     assert run_hook(SCRIPT, raw="{{{") is None

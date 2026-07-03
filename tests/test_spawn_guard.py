@@ -107,6 +107,16 @@ def test_upward_search_stops_at_repo_root(tmp_path):
     assert is_deny(run_hook(SCRIPT, spawn_payload(repo)))
 
 
+def test_upward_search_stops_at_worktree_boundary(tmp_path):
+    # In a git worktree .git is a FILE, not a directory. The search must
+    # stop there too — not escape into an unrelated project's ledger.
+    write_ledger(tmp_path)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
+    assert is_deny(run_hook(SCRIPT, spawn_payload(worktree)))
+
+
 def test_cache_fallback_when_payload_has_no_model(repo_dir, tmp_path):
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
