@@ -1,14 +1,37 @@
 #!/usr/bin/env python3
-"""Stop guard: don't let a turn end silently while ./.workflow/LEDGER.md has open items.
+"""Stop guard: don't let a turn end silently while the Requirements Ledger has open items.
 
 Dynamic Workflow verification rule: the workflow cannot close while any
 ledger item is unaddressed. Open item = a line matching '- [ ]'.
 Closed: '- [x]' (done+verified) or '- [~] deferred: <reason>' (user-approved).
+
+The ledger is searched from the working directory up to the repo root
+(same walk as the spawn guard), so a session running in a subdirectory
+is held to the same ledger it was gated on at spawn time.
 """
 import json
 import os
 import re
 import sys
+
+
+def find_ledger(start_dir):
+    """Path of .workflow/LEDGER.md from start_dir up to the repo root.
+
+    Mirrors the spawn guard's walk: stops at the first directory that
+    contains .git, or at the filesystem root.
+    """
+    d = os.path.abspath(start_dir or os.getcwd())
+    while True:
+        candidate = os.path.join(d, ".workflow", "LEDGER.md")
+        if os.path.isfile(candidate):
+            return candidate
+        if os.path.isdir(os.path.join(d, ".git")):
+            return None
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
 
 
 def main():
@@ -21,9 +44,8 @@ def main():
     if data.get("stop_hook_active"):
         return
 
-    cwd = data.get("cwd") or os.getcwd()
-    ledger = os.path.join(cwd, ".workflow", "LEDGER.md")
-    if not os.path.isfile(ledger):
+    ledger = find_ledger(data.get("cwd"))
+    if not ledger:
         return
 
     try:
@@ -41,7 +63,7 @@ def main():
     print(json.dumps({
         "decision": "block",
         "reason": (
-            f"LEDGER GUARD: ./.workflow/LEDGER.md still has {len(open_items)} "
+            f"LEDGER GUARD: {ledger} still has {len(open_items)} "
             f"open item(s):\n{preview}{more}\n\n"
             "If you are CLOSING a workflow: address each item and mark it '- [x]' "
             "(only after verification confirms it), or '- [~] deferred: <reason>' "

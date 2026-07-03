@@ -14,9 +14,23 @@ Subagents may be used liberally. This matters most when you are a
 top-tier model (Fable, Opus): every token of bulk work you delegate
 preserves both your context window and the user's usage limit.
 
-Always select subagent models by TIER NAME — `haiku`, `sonnet`,
-`opus` — never by dated model ID. Tier names resolve to the latest
-model of each tier and never go stale.
+## Tiers & effort
+
+Always select subagent models by TIER NAME — `sonnet`, `opus` —
+never by dated model ID. Tier names resolve to the latest model of
+each tier and never go stale (`sonnet` = Sonnet 5, `opus` =
+Opus 4.8 today). The haiku tier is RETIRED: everything that used
+to go to haiku goes to sonnet instead.
+
+Effort is a real knob — agent frontmatter `effort:`, Workflow
+`agent()` option `effort:` — spend it where reasoning happens:
+
+- judgment & verification (opus) → `max`, always
+- implementation (sonnet) → `high`; raise to `max` when
+  correctness is critical
+- mechanical gathering (fetch/grep/format — no decisions) →
+  `low`; these tasks don't reason, extra effort is pure latency
+  and tokens
 
 ## Rule 0 — Orchestration threshold
 
@@ -26,6 +40,10 @@ scans) or has genuinely independent phases. Do it yourself when the
 change is bounded and well understood — even if it touches several
 files. Subagent reports land in YOUR context too: for small tasks,
 ledger + briefs + verification cost more context than direct work.
+
+Exception: bounded follow-up work that leans on THIS conversation
+(apply the fix we discussed, extend the analysis above) → spawn a
+fork (see below) instead of re-explaining the context in a spec.
 
 ## Rule 1 — Requirements Ledger (anti-detail-loss, non-negotiable)
 
@@ -40,8 +58,9 @@ edge case in the user's request — one line each.
   Mark `- [x]` only when addressed AND verified; `- [~] deferred:
   <reason>` only with user approval. ENFORCED BY THIS PLUGIN'S
   HOOKS: a Stop hook blocks closing while any `- [ ]` remains; a
-  PreToolUse hook blocks detailed delegations (spawn prompt > 1500
-  chars) while the ledger file is missing.
+  PreToolUse hook blocks detailed delegations (spawn prompt or
+  Workflow script > 1500 chars) while the ledger file is missing.
+  Forks are exempt — they already see the ledger in context.
 - Every phase you spawn cites which ledger items it covers.
 - The workflow CANNOT close while any item is unaddressed.
 - New discoveries mid-workflow get appended to the ledger.
@@ -73,21 +92,25 @@ Read-only agents may share the repo concurrently. Agents that EDIT
 files in parallel must each run with `isolation: "worktree"` —
 otherwise they clobber each other's changes. Spawn independent
 agents in a single message so they actually run concurrently.
+Prefer the `Workflow` tool for any multi-agent fan-out: one
+deterministic script manages concurrency, ordering, and per-agent
+isolation — and its intermediate results never enter your context.
 
 ## Model routing (by tier)
 
-**haiku** → purely mechanical, zero-judgment work:
+**sonnet** (Sonnet 5) → mechanical work AND standard
+implementation:
 - grep/scan, structure listing, fetching pages (fetch ONLY — no
-  relevance filtering), formatting, mechanical edits
-- haiku NEVER decides what is relevant or important.
+  relevance filtering), formatting, mechanical edits — at `low`
+  effort
+- code from a clear spec, tests for designed behavior, lint-level
+  review, routine debugging — at `high` (→ `max` when critical)
+- Fetch workers NEVER decide what is relevant or important.
 
-**sonnet** → standard implementation:
-- Code from a clear spec, tests for designed behavior,
-  lint-level review, routine debugging
-
-**opus** → everything involving judgment (use liberally):
+**opus** (Opus 4.8, always `max` effort) → everything involving
+judgment (use liberally):
 - Reading sources/files where fidelity matters — opus reads raw
-  material directly from disk; never force lossy haiku→summary
+  material directly from disk; never force lossy fetch→summary
   chains when detail preservation is the goal
 - Relevance filtering of research sources
 - Architecture, tradeoffs, hard debugging, security/adversarial
@@ -97,18 +120,37 @@ agents in a single message so they actually run concurrently.
 the answer, and anything that hinges on conversation context only
 you have.
 
-## Research pipeline
+## Fork delegation — spec-free, context-inheriting
 
-1. YOU (or opus): define the questions + search strategy. Source
-   selection is judgment — it never belongs to haiku.
-2. haiku (parallel): fetch sources verbatim → write each to
-   scratch/, return paths + one-line descriptions. No filtering.
-3. opus: read raw sources from disk, judge relevance, produce
-   structured briefs (claims, evidence, exact quotes, confidence,
-   contradictions flagged).
-4. opus: synthesize the briefs.
-5. YOU: check synthesis + verbatim evidence against the Ledger →
-   decide.
+`subagent_type: "fork"` clones your FULL conversation context: no
+spec to write, and its tool churn stays out of your window — only
+the final result returns. Use it for bounded, context-heavy work
+you would otherwise re-explain at length. Caveat: a fork runs on
+YOUR model and spends the usage limit — bulk mechanical work still
+goes to tier agents, not forks.
+
+## Research pipeline — one Workflow, zero mid-flight reports
+
+Do NOT relay sources through your context hop by hop. Author ONE
+`Workflow` script and let it run the pipeline deterministically:
+
+1. YOU: define the questions + sources (judgment — it never
+   belongs to fetch workers), write the Ledger, then write the
+   script.
+2. Script: `pipeline(sources, fetch → brief)` — fetch (sonnet,
+   `low`) writes each raw source verbatim to ./.workflow/scratch/
+   and returns only the path; brief (opus, `max`) reads it from
+   disk and returns a structured brief (claims, evidence, exact
+   quotes, confidence, contradictions flagged). No barrier:
+   source A can be at "brief" while source B still fetches.
+3. opus (`max`), as the final stage or one more agent() call:
+   synthesize the briefs.
+4. YOU: check the synthesis + verbatim evidence against the
+   Ledger → decide.
+
+Your context receives the script you wrote and the final
+synthesis. The bulk never touches it — that is the entire point
+for a token-frugal chair.
 
 ## Subagent output contract (enforced)
 
@@ -126,10 +168,10 @@ silently accept partial output.
 
 ## Verification phase (mandatory before closing)
 
-Spawn a FRESH opus agent that has NOT worked on the task. Give it:
-the original user request + the Ledger path + the work product
-paths. It reads everything from disk. Its only job: find what's
-missing, wrong, or unaddressed, item by item.
+Spawn a FRESH opus agent (`max` effort) that has NOT worked on the
+task. Give it: the original user request + the Ledger path + the
+work product paths. It reads everything from disk. Its only job:
+find what's missing, wrong, or unaddressed, item by item.
 
 - Findings → new phases. Re-verify after fixes.
 - CAP: max 3 verify→fix cycles. If findings remain after 3, STOP
@@ -138,13 +180,12 @@ missing, wrong, or unaddressed, item by item.
 
 ## Thoroughness & escalation
 
-- Subagent depth is steered through the PROMPT — there is no effort
-  parameter. In opus judgment phases, explicitly instruct deep,
-  exhaustive reasoning. Don't economize on thinking wherever a
+- Steer depth with BOTH knobs: set `effort` per the policy above,
+  AND instruct deep, exhaustive reasoning in the prompt wherever a
   decision is being made.
 - Predictably hard → directly opus. No ladder-climbing.
-- sonnet returns "uncertain" → straight to opus; never retry on the
-  same tier.
+- sonnet returns "uncertain" → straight to opus at `max`; never
+  retry on the same tier.
 
 ## Your context hygiene
 
