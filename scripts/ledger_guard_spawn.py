@@ -108,9 +108,14 @@ def active_profile(data):
 
 
 def threshold(data):
-    # Hard override wins for every profile (backward compatible).
-    if "LEDGER_GUARD_THRESHOLD" in os.environ:
-        return _int_env("LEDGER_GUARD_THRESHOLD", 1500)
+    # Hard override wins for every profile (backward compatible); a value
+    # that doesn't parse falls through to the per-profile defaults.
+    raw = os.environ.get("LEDGER_GUARD_THRESHOLD")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
     if active_profile(data) == "fable":
         return _int_env("LEDGER_GUARD_THRESHOLD_FABLE", 1500)
     return _int_env("LEDGER_GUARD_THRESHOLD_OPUS", 4000)

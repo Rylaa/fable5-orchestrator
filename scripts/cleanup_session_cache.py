@@ -29,6 +29,19 @@ import tempfile
 import time
 
 SWEEP_AGE_SECONDS = 48 * 3600
+METRICS_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _rotate_metrics():
+    """Cap the metrics log: past ~5MB the current file becomes .old
+    (replacing the previous .old), so the pair never exceeds ~10MB."""
+    try:
+        path = os.path.join(os.path.expanduser("~"), ".claude",
+                            "fable-orch", "metrics.jsonl")
+        if os.path.isfile(path) and os.path.getsize(path) > METRICS_MAX_BYTES:
+            os.replace(path, path + ".old")
+    except Exception:
+        pass
 
 
 def _tmp_json(prefix, session_id):
@@ -163,9 +176,13 @@ def main():
             max_idle_h = float(os.environ.get("FABLE_ORCH_SWARM_MAX_IDLE_H") or 48)
         except ValueError:
             max_idle_h = 48.0
-        swarm_own = reap_own_swarm(session_id)
-        swarm_stale = sweep_stale_swarms(max_idle_h)
+        try:
+            swarm_own = reap_own_swarm(session_id)
+            swarm_stale = sweep_stale_swarms(max_idle_h)
+        except Exception:
+            pass  # no tmux, or no os.getuid (Windows) — never fail the hook
 
+    _rotate_metrics()
     _metric("cleanup", session_id, swarm_own=swarm_own, swarm_stale=swarm_stale)
 
 

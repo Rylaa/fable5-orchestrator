@@ -57,9 +57,10 @@ edge case in the user's request — one line each.
 - Format every item as a checkbox line: `- [ ] N. <item>`.
   Mark `- [x]` only when addressed AND verified; `- [~] deferred:
   <reason>` only with user approval. ENFORCED BY THIS PLUGIN'S
-  HOOKS: a Stop hook blocks closing while any `- [ ]` remains; a
-  PreToolUse hook blocks detailed delegations (spawn prompt or
-  Workflow script > 1500 chars) while the ledger file is missing.
+  HOOKS: a Stop hook holds the session's first close while any
+  `- [ ]` remains (one reminder per session); a PreToolUse hook
+  blocks detailed delegations (spawn prompt or Workflow script >
+  1500 chars) while the ledger file is missing.
   Forks are exempt — they already see the ledger in context.
 - Every phase you spawn cites which ledger items it covers.
 - The workflow CANNOT close while any item is unaddressed.

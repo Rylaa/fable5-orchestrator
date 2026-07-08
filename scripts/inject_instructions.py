@@ -8,9 +8,9 @@ Two profiles ship side by side:
       usage limit of an ultra-scarce top tier.
 
   instructions/dynamic-workflow-opus.md   Opus-class-in-chair, latency-lean.
-      A 1M-context judgment+implementation model is in the chair, so the
-      scarce resource flips to wall-clock. Same quality guarantees, but
-      ceremony (ledger, verification, disk hand-off) is proportional.
+      A large-context judgment+implementation model is in the chair, so
+      the scarce resource flips to wall-clock. Same quality guarantees,
+      but ceremony (ledger, verification, disk hand-off) is proportional.
 
 Which one is injected depends on the SESSION MODEL, reported by Claude
 Code in the SessionStart payload as a top-level `model` string. This hook
@@ -87,12 +87,23 @@ def main():
         return  # never break session start
 
     # Cache model+profile for the guards (best effort; never fatal).
+    # `started` marks the session's FIRST start and must survive the
+    # re-runs SessionStart gets on resume/clear/compact — the stop guard
+    # compares ledger mtimes against it to decide ownership, so it can
+    # never move forward.
     try:
         cache = session_model_cache_path(session_id)
         if cache:
+            started = time.time()
+            try:
+                with open(cache, encoding="utf-8") as f:
+                    started = float(json.load(f).get("started") or started)
+            except Exception:
+                pass
             with open(cache, "w", encoding="utf-8") as f:
                 json.dump(
-                    {"model": model, "profile": profile, "session_id": session_id},
+                    {"model": model, "profile": profile,
+                     "session_id": session_id, "started": round(started, 3)},
                     f,
                 )
     except Exception:

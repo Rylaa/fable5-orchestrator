@@ -101,6 +101,34 @@ def test_metrics_optout(tmp_path):
     assert not (home / ".claude" / "fable-orch" / "metrics.jsonl").exists()
 
 
+def test_inject_preserves_started_across_reruns(tmp_path):
+    env = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-started"},
+             env_extra=env, tmpdir=tmp_path)
+    cache = tmp_path / "fable-orch-model-s-started.json"
+    data = json.loads(cache.read_text(encoding="utf-8"))
+    assert "started" in data
+    data["started"] = 123.0  # pretend the session started long ago
+    cache.write_text(json.dumps(data), encoding="utf-8")
+    # Re-injection (resume/clear/compact) must not move `started` forward.
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-started"},
+             env_extra=env, tmpdir=tmp_path)
+    assert json.loads(cache.read_text(encoding="utf-8"))["started"] == 123.0
+
+
+def test_metrics_rotation_caps_the_log(tmp_path):
+    home = tmp_path / "home"
+    d = home / ".claude" / "fable-orch"
+    d.mkdir(parents=True)
+    log = d / "metrics.jsonl"
+    log.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
+    run_hook(CLEANUP, {"session_id": "s-rot"},
+             env_extra={"HOME": str(home), "FABLE_ORCH_METRICS": "1"},
+             tmpdir=tmp_path)
+    assert (d / "metrics.jsonl.old").is_file()
+    assert log.is_file() and b"cleanup" in log.read_bytes()
+
+
 def test_cleanup_removes_cache(tmp_path):
     cache = tmp_path / "fable-orch-model-s-clean.json"
     cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")

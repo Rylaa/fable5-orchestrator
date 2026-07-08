@@ -88,6 +88,21 @@ def test_ledger_touched_this_session_blocks(repo_dir, tmp_path):
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
 
 
+def test_ownership_survives_compact_reinjection(repo_dir, tmp_path):
+    # The ledger was touched mid-session; then SessionStart re-fired on a
+    # compact and REWROTE the cache (fresh file mtime). The immutable
+    # `started` field must keep the ledger owned by this session.
+    ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
+    mid = time.time() - 1800
+    os.utime(ledger, (mid, mid))
+    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache.write_text(
+        json.dumps({"profile": "fable", "started": time.time() - 3600}),
+        encoding="utf-8",
+    )  # file mtime = now (post-compact rewrite); started = an hour ago
+    assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
+
+
 def test_ledger_in_parent_blocks(repo_dir, tmp_path):
     write_ledger(repo_dir, "- [ ] 1. open\n")
     sub = repo_dir / "pkg" / "inner"

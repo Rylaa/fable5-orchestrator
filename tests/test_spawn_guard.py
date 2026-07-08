@@ -83,6 +83,31 @@ def test_env_profile_override_beats_payload_model(repo_dir):
     assert is_deny(result)
 
 
+def test_malformed_hard_threshold_falls_through_to_profile(repo_dir):
+    # "abc" must not pin the strict 1500 gate on the lean profile —
+    # LONG (2000) stays under the opus gate (4000) and passes.
+    assert run_hook(
+        SCRIPT,
+        spawn_payload(repo_dir, model="claude-opus-4-8"),
+        env_extra={"LEDGER_GUARD_THRESHOLD": "abc"},
+    ) is None
+
+
+def test_per_profile_threshold_env_overrides(repo_dir):
+    # Raise the fable gate above LONG -> passes on fable.
+    assert run_hook(
+        SCRIPT,
+        spawn_payload(repo_dir),
+        env_extra={"LEDGER_GUARD_THRESHOLD_FABLE": "3000"},
+    ) is None
+    # Lower the opus gate below LONG -> denied on the lean profile.
+    assert is_deny(run_hook(
+        SCRIPT,
+        spawn_payload(repo_dir, model="claude-opus-4-8"),
+        env_extra={"LEDGER_GUARD_THRESHOLD_OPUS": "1000"},
+    ))
+
+
 def test_hard_threshold_override(repo_dir):
     result = run_hook(
         SCRIPT,

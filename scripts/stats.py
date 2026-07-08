@@ -37,6 +37,7 @@ def main():
     events = Counter()
     profiles = Counter()
     ledgers = Counter()
+    swarm_reaped = 0
 
     for rec in records(path):
         event = rec.get("event") or "?"
@@ -51,6 +52,12 @@ def main():
             profiles[rec.get("profile") or "?"] += 1
         if event == "stop_block":
             ledgers[rec.get("ledger") or "?"] += 1
+        if event == "cleanup":
+            try:
+                swarm_reaped += int(rec.get("swarm_own") or 0)
+                swarm_reaped += int(rec.get("swarm_stale") or 0)
+            except (TypeError, ValueError):
+                pass
 
     print(f"metrics: {path}\n")
     print("== events per day ==")
@@ -71,6 +78,9 @@ def main():
     passes = events.get("spawn_pass_over_threshold", 0)
     if denies or passes:
         print(f"\nover-threshold spawns: {passes} passed with a ledger, {denies} denied")
+
+    if swarm_reaped:
+        print(f"\ntmux teammate servers reaped: {swarm_reaped}")
 
     if ledgers:
         print("\n== stop blocks by ledger ==")

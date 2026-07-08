@@ -140,7 +140,7 @@ A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its 
 /plugin install orchestrator@fable-orchestrator
 ```
 
-Requires `python3` on PATH. Model auto-detection works out of the box.
+Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to `tmux` for teammate reaping, and Windows is not supported. Model auto-detection works out of the box.
 
 ### Manual install (without the plugin system)
 
@@ -168,7 +168,7 @@ Requires `python3` on PATH. Model auto-detection works out of the box.
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 ~/.claude/hooks/cleanup_session_cache.py", "timeout": 10 }
+          { "type": "command", "command": "python3 ~/.claude/hooks/cleanup_session_cache.py", "timeout": 20 }
         ]
       }
     ]

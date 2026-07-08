@@ -86,16 +86,26 @@ def find_ledger(start_dir):
 def owned_by_session(ledger, session_id):
     """True if the ledger was modified during this session.
 
-    The SessionStart injector writes the model cache at session start,
-    so its mtime marks the session's beginning (60s slack for clock
-    jitter). No cache (manual install) → assume ownership rather than
-    go silent.
+    Session start is the injector cache's immutable `started` field —
+    the cache FILE is rewritten on resume/clear/compact re-injections,
+    so its mtime moves and serves only as the fallback for caches
+    written by older versions. 60s slack for clock jitter. No cache
+    (manual install) → assume ownership rather than go silent.
     """
     cache = session_model_cache_path(session_id)
     if not cache or not os.path.isfile(cache):
         return True
     try:
-        return os.path.getmtime(ledger) >= os.path.getmtime(cache) - 60.0
+        start = None
+        try:
+            with open(cache, encoding="utf-8") as f:
+                raw = json.load(f).get("started")
+            start = float(raw) if raw is not None else None
+        except Exception:
+            start = None
+        if start is None:
+            start = os.path.getmtime(cache)
+        return os.path.getmtime(ledger) >= start - 60.0
     except OSError:
         return True
 
