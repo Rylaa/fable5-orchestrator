@@ -3,9 +3,9 @@
 
 Dynamic Workflow Rule 1: serious multi-phase delegation requires
 a Requirements Ledger at .workflow/LEDGER.md (searched from the
-working directory up to the repo root). Short spawn prompts (quick
-searches/lookups) pass freely so casual Explore agents are never
-blocked.
+working directory up to the repo root or $HOME). Short spawn
+prompts (quick searches/lookups) pass freely so casual Explore
+agents are never blocked.
 
 What is gated:
     Agent / Task  -> length of tool_input.prompt
@@ -26,8 +26,9 @@ large/parallel/high-risk work writes a file.
 
 Profile resolution order:
     1. FABLE_ORCH_PROFILE env override (fable | opus)
-    2. top-level `model` string in the hook payload (Claude Code
-       includes it on PreToolUse; optional)
+    2. top-level `model` string in the hook payload (future-proofing:
+       per the Claude Code hooks reference, `model` is delivered only
+       on SessionStart today — PreToolUse carries none)
     3. per-session cache written by the SessionStart hook
     4. default: lean 'opus' (never over-block)
 
@@ -37,11 +38,13 @@ Configuration (all optional):
     Per-profile defaults (used when the hard override is unset):
         LEDGER_GUARD_THRESHOLD_FABLE   default 1500
         LEDGER_GUARD_THRESHOLD_OPUS    default 4000
+    FABLE_ORCH_METRICS=0 disables the local metrics log.
 """
 import json
 import os
 import sys
 import tempfile
+import time
 
 
 def _int_env(name, default):
@@ -56,6 +59,23 @@ def session_model_cache_path(session_id):
         return None
     safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
     return os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+
+
+def _metric(event, session_id=None, **extra):
+    """Append one event line to ~/.claude/fable-orch/metrics.jsonl (best effort)."""
+    if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
+        return
+    try:
+        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        os.makedirs(d, exist_ok=True)
+        rec = {"ts": round(time.time(), 3), "event": event}
+        if session_id:
+            rec["session"] = str(session_id)[:8]
+        rec.update(extra)
+        with open(os.path.join(d, "metrics.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
 
 
 def profile_from_model(model):
@@ -97,22 +117,22 @@ def threshold(data):
 
 
 def find_ledger(start_dir):
-    """Path of .workflow/LEDGER.md from start_dir up to the repo root.
+    """Path of .workflow/LEDGER.md from start_dir up to the repo root or $HOME.
 
     Walks parent directories so sessions running in a subdirectory
     still see the project ledger. Stops at the first directory that
-    contains .git (a ledger above the repo belongs to another
-    project), or at the filesystem root. .git is checked with
-    os.path.exists, not isdir: in worktrees and submodules .git is a
-    FILE, and treating it as "not a boundary" would let the search
-    escape into an unrelated project's ledger.
+    contains .git (checked with os.path.exists, not isdir — in
+    worktrees and submodules .git is a FILE), at the home directory
+    (a ledger above $HOME belongs to nobody), or at the filesystem
+    root.
     """
     d = os.path.abspath(start_dir or os.getcwd())
+    home = os.path.abspath(os.path.expanduser("~"))
     while True:
         candidate = os.path.join(d, ".workflow", "LEDGER.md")
         if os.path.isfile(candidate):
             return candidate
-        if os.path.exists(os.path.join(d, ".git")):
+        if os.path.exists(os.path.join(d, ".git")) or d == home:
             return None
         parent = os.path.dirname(d)
         if parent == d:
@@ -143,9 +163,16 @@ def main():
     if len(text) <= limit:
         return
 
+    session_id = data.get("session_id")
     if find_ledger(data.get("cwd")):
+        _metric("spawn_pass_over_threshold", session_id,
+                chars=len(text), threshold=limit,
+                tool=data.get("tool_name") or "")
         return
 
+    _metric("spawn_deny", session_id,
+            chars=len(text), threshold=limit,
+            tool=data.get("tool_name") or "")
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

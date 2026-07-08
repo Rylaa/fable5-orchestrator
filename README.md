@@ -21,7 +21,7 @@ This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends t
            ┌─────────────────────────────┼─────────────────────────────┐
            ▼                             ▼                             ▼
 ┌─────────────────────┐       ┌─────────────────────┐       ┌─────────────────────┐
-│   SONNET 5 · max    │       │   SONNET 5 · max    │       │   SONNET 5 · max    │
+│   SONNET 5 · low    │       │   SONNET 5 · max    │       │   SONNET 5 · max    │
 │   mechanical bulk   │       │   implementation    │       │   routine judgment  │
 │   grep·fetch·scan   │       │   code · tests      │       │   briefs · review   │
 │   format · read     │       │   debug · refactor  │       │   filtering         │
@@ -45,7 +45,7 @@ Fable thinks. Sonnet does. Opus checks. Your limit pays for the thinking only:
 │ Phase planning, arbitration, decisions  │ Fable 5 (chair) │ yes — and only this │
 │ Implementation, tests, refactors        │ Sonnet 5 max    │ nothing             │
 │ Source briefs, filtering, code review   │ Sonnet 5 max    │ nothing             │
-│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 max    │ nothing             │
+│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 low    │ nothing             │
 │ Fresh-eyes verification, escalations    │ Opus 4.8 max    │ nothing             │
 └─────────────────────────────────────────┴─────────────────┴─────────────────────┘
 ```
@@ -78,7 +78,7 @@ A SessionStart hook detects the chair model and injects the profile that fits it
 └──────────────────────────┴──────────────────────────────┴──────────────────────────────┘
 ```
 
-Both profiles route subagents by tier name (`sonnet`, `opus`, `fable`), keep bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and run every delegated worker at `max` effort — full depth everywhere; the limit is protected by *who* does the work, not by dialing effort down. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
+Both profiles route subagents by tier name (`sonnet`, `opus`, `fable`), keep bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and set effort per spawn: `max` for implementation, judgment, and verification; `low` for mechanical gathering. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
 
 ### 2 · A Requirements Ledger
 
@@ -118,14 +118,16 @@ spawn (Agent / Task / Workflow)
 ```
 turn ends
   │
-  ├─ no ledger on the search path ................. pass
-  ├─ every item "- [x]" or "- [~] deferred" ....... pass
-  ├─ already blocked once this turn ............... pass  (loop guard)
+  ├─ no ledger on the search path (cwd → repo root / $HOME) ... pass
+  ├─ every item "- [x]" or "- [~] deferred" ................... pass
+  ├─ ledger untouched by this session ......................... pass
+  ├─ this session already got its reminder .................... pass
   │
-  └─ open "- [ ]" items remain .................... BLOCK once, listing the items:
-       finish them, defer with user approval, or — if the ledger belongs to a
-       paused task — acknowledge in one line and stop. Archive paused ledgers
-       (rename to LEDGER-<topic>-archive.md) to silence the guard entirely.
+  └─ open items, touched here, first time ..................... BLOCK once,
+       listing the items: finish them, defer with user approval, or
+       acknowledge in one line and move on — one reminder per session.
+       Archive paused ledgers (LEDGER-<topic>-archive.md) to silence for
+       good; LEDGER_GUARD_STOP_MODE=every-turn restores per-turn blocking.
 ```
 
 A fourth hook (`SessionEnd`) removes the session's temp-dir model cache.
@@ -183,19 +185,21 @@ Requires `python3` on PATH. Model auto-detection works out of the box.
 Set these in `~/.claude/settings.json` under `"env"`.
 
 ```
-┌───────────────────────────────┬─────────┬───────────────────────────────────────────────┐
-│ Env var                       │ Default │ Meaning                                       │
-├───────────────────────────────┼─────────┼───────────────────────────────────────────────┤
-│ FABLE_ORCH_PROFILE            │ auto    │ auto | fable | opus — force a profile;       │
-│                               │         │ honored by the injector and the spawn guard  │
-│ LEDGER_GUARD_THRESHOLD        │ (unset) │ hard threshold override, applied to every    │
-│                               │         │ profile (chars)                              │
-│ LEDGER_GUARD_THRESHOLD_FABLE  │ 1500    │ spawn-guard gate under the Fable profile     │
-│ LEDGER_GUARD_THRESHOLD_OPUS   │ 4000    │ spawn-guard gate under the lean profile      │
-└───────────────────────────────┴─────────┴───────────────────────────────────────────────┘
+┌───────────────────────────────┬────────────────────┬────────────────────────────────────────────┐
+│ Env var                       │ Default            │ Meaning                                    │
+├───────────────────────────────┼────────────────────┼────────────────────────────────────────────┤
+│ FABLE_ORCH_PROFILE            │ auto               │ auto | fable | opus — force a profile     │
+│ LEDGER_GUARD_THRESHOLD        │ (unset)            │ hard spawn threshold, every profile       │
+│ LEDGER_GUARD_THRESHOLD_FABLE  │ 1500               │ spawn gate under the Fable profile        │
+│ LEDGER_GUARD_THRESHOLD_OPUS   │ 4000               │ spawn gate under the lean profile         │
+│ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking     │
+│ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging          │
+└───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
-**Model detection.** Claude Code delivers the session model only in the SessionStart payload (optional even there — no other hook event receives it). The injector caches `{model, profile}` per session; the spawn guard resolves `FABLE_ORCH_PROFILE` → payload model (future-proofing) → session cache → lean default. Unknown model means lean profile — the heavy Fable discipline never runs silently on the wrong chair.
+**Model detection.** Claude Code delivers the session model only in the SessionStart payload (optional even there — no other hook event receives it). The injector caches `{model, profile}` per session; the spawn guard resolves `FABLE_ORCH_PROFILE` → payload model (future-proofing) → session cache → lean default. Unknown model means lean profile — the heavy Fable discipline never runs silently on the wrong chair. The SessionEnd hook removes the session's temp files and sweeps any older than 48 hours.
+
+**Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per profile, spawn denies/passes, stop blocks and suppressions. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
 
 ## Tests
 
@@ -203,7 +207,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 python3 -m pytest tests/ -q
 ```
 
-The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — thresholds per model, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree boundaries, stop-guard blocking, injection, and cache cleanup.
+The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — thresholds per model, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, and cache cleanup.
 
 ## Honest limitations
 

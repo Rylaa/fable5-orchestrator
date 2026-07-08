@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 
 def session_model_cache_path(session_id):
@@ -31,6 +32,23 @@ def session_model_cache_path(session_id):
         return None
     safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
     return os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+
+
+def _metric(event, session_id=None, **extra):
+    """Append one event line to ~/.claude/fable-orch/metrics.jsonl (best effort)."""
+    if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
+        return
+    try:
+        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        os.makedirs(d, exist_ok=True)
+        rec = {"ts": round(time.time(), 3), "event": event}
+        if session_id:
+            rec["session"] = str(session_id)[:8]
+        rec.update(extra)
+        with open(os.path.join(d, "metrics.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
 
 
 def resolve_profile(model):
@@ -80,6 +98,7 @@ def main():
     except Exception:
         pass
 
+    _metric("inject", session_id, profile=profile, model=model)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",

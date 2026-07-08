@@ -65,11 +65,69 @@ def test_plugin_root_fallback_to_script_location(tmp_path):
     assert "(FABLE profile)" in context_of(result)
 
 
+def test_metrics_written_when_enabled(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    run_hook(
+        INJECT,
+        {"model": "claude-fable-5", "session_id": "s-metrics"},
+        env_extra={
+            "CLAUDE_PLUGIN_ROOT": str(REPO),
+            "HOME": str(home),
+            "FABLE_ORCH_METRICS": "1",
+        },
+        tmpdir=tmp_path,
+    )
+    log = home / ".claude" / "fable-orch" / "metrics.jsonl"
+    assert log.is_file()
+    rec = json.loads(log.read_text(encoding="utf-8").strip().splitlines()[0])
+    assert rec["event"] == "inject"
+    assert rec["profile"] == "fable"
+
+
+def test_metrics_optout(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    run_hook(
+        INJECT,
+        {"model": "claude-fable-5", "session_id": "s-nometrics"},
+        env_extra={
+            "CLAUDE_PLUGIN_ROOT": str(REPO),
+            "HOME": str(home),
+            "FABLE_ORCH_METRICS": "0",
+        },
+        tmpdir=tmp_path,
+    )
+    assert not (home / ".claude" / "fable-orch" / "metrics.jsonl").exists()
+
+
 def test_cleanup_removes_cache(tmp_path):
     cache = tmp_path / "fable-orch-model-s-clean.json"
     cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
     assert run_hook(CLEANUP, {"session_id": "s-clean"}, tmpdir=tmp_path) is None
     assert not cache.exists()
+
+
+def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
+    import os
+    import time
+
+    cache = tmp_path / "fable-orch-model-s-clean.json"
+    cache.write_text("{}", encoding="utf-8")
+    sidecar = tmp_path / "fable-orch-stop-s-clean.json"
+    sidecar.write_text("{}", encoding="utf-8")
+    stale = tmp_path / "fable-orch-model-dead-session.json"
+    stale.write_text("{}", encoding="utf-8")
+    old = time.time() - 72 * 3600
+    os.utime(stale, (old, old))
+    fresh = tmp_path / "fable-orch-model-alive.json"
+    fresh.write_text("{}", encoding="utf-8")
+
+    assert run_hook(CLEANUP, {"session_id": "s-clean"}, tmpdir=tmp_path) is None
+    assert not cache.exists()
+    assert not sidecar.exists()
+    assert not stale.exists()  # older than the 48h sweep window
+    assert fresh.exists()      # other live sessions' files stay
 
 
 def test_cleanup_without_session_id_is_noop(tmp_path):

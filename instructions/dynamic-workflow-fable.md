@@ -25,11 +25,10 @@ to go to haiku goes to sonnet instead.
 Effort is a real knob — agent frontmatter `effort:`, Workflow
 `agent()` option `effort:` — spend it where reasoning happens:
 
-- ALL sonnet workers → `max`, always — mechanical gathering,
-  implementation, and judgment alike. Full depth everywhere;
-  the limit is protected by WHO runs the work, not by dialing
-  effort down.
+- implementation & judgment (sonnet) → `max`, always
 - verification & escalation (opus) → `max`, always
+- mechanical gathering (fetch/grep/format — no decisions) →
+  `low`; these tasks don't reason, extra effort is pure latency
 
 ## Rule 0 — Orchestration threshold
 
@@ -63,6 +62,9 @@ edge case in the user's request — one line each.
 - Every phase you spawn cites which ledger items it covers.
 - The workflow CANNOT close while any item is unaddressed.
 - New discoveries mid-workflow get appended to the ledger.
+- LATENCY: write the ledger and spawn the first wave of agents
+  in ONE message (parallel tool calls) — never ledger → wait →
+  spawn.
 - If ledger items conflict, or the request is ambiguous on a
   consequential point, ASK THE USER before building. Don't guess.
 
@@ -91,22 +93,24 @@ Read-only agents may share the repo concurrently. Agents that EDIT
 files in parallel must each run with `isolation: "worktree"` —
 otherwise they clobber each other's changes. Spawn independent
 agents in a single message so they actually run concurrently.
-Prefer the `Workflow` tool for any multi-agent fan-out: one
-deterministic script manages concurrency, ordering, and per-agent
-isolation — and its intermediate results never enter your context.
+Fan out with parallel Agent calls in a single message by default;
+use the `Workflow` tool only when the user has opted into
+multi-agent orchestration (ultracode / an explicit ask) — then one
+deterministic script manages concurrency, ordering, and isolation,
+and its intermediate results never enter your context.
 
 ## Model routing (by tier)
 
-**sonnet** (Sonnet 5, always `max` effort) → the universal
-worker: mechanical work, implementation, AND routine judgment:
+**sonnet** (Sonnet 5) → the universal worker: mechanical work,
+implementation, AND routine judgment:
 - grep/scan, structure listing, fetching pages (fetch ONLY — no
-  relevance filtering), formatting, mechanical edits
+  relevance filtering), formatting, mechanical edits — at `low`
 - code from a clear spec, tests for designed behavior, routine
-  debugging
+  debugging — at `max`
 - reading sources/files where fidelity matters, structured
   briefs, relevance filtering, lint-level and standard review,
-  synthesis drafts. Sonnet 5 carries the judgment VOLUME; that
-  is what preserves the limit.
+  synthesis drafts — at `max`. Sonnet 5 carries the judgment
+  VOLUME; that is what preserves the limit.
 - Fetch workers NEVER decide what is relevant or important —
   filtering is a separate sonnet pass.
 
@@ -136,30 +140,28 @@ you would otherwise re-explain at length. Caveat: a fork runs on
 YOUR model and spends the usage limit — bulk mechanical work still
 goes to tier agents, not forks.
 
-## Research pipeline — one Workflow, zero mid-flight reports
+## Research pipeline — parallel fan-out, zero mid-flight reports
 
-Do NOT relay sources through your context hop by hop. Author ONE
-`Workflow` script and let it run the pipeline deterministically:
+Do NOT relay sources through your context hop by hop:
 
 1. YOU: define the questions + sources (judgment — it never
-   belongs to fetch workers), write the Ledger, then write the
-   script.
-2. Script: `pipeline(sources, fetch → brief)` — fetch (sonnet,
-   `max`) writes each raw source verbatim to ./.workflow/scratch/
-   and returns only the path; brief (sonnet, `max`) reads it from
-   disk and returns a structured brief (claims, evidence, exact
-   quotes, confidence, contradictions flagged). No barrier:
-   source A can be at "brief" while source B still fetches.
-3. sonnet (`max`), as the final stage or one more agent() call:
-   synthesize the briefs into a draft answer; escalate to opus
-   (`max`) only if sources conflict in ways the draft cannot
-   resolve.
-4. YOU: check the synthesis + verbatim evidence against the
+   belongs to fetch workers), then write the Ledger and spawn
+   the whole fetch wave in ONE message.
+2. One sonnet agent per source (`low`): fetch, write the raw
+   source verbatim to ./.workflow/scratch/, return only the path.
+3. One sonnet agent per source (`max`): read it from disk, return
+   a structured brief (claims, evidence, exact quotes, confidence,
+   contradictions flagged).
+4. sonnet (`max`): synthesize the briefs into a draft answer;
+   escalate to opus (`max`) only if sources conflict in ways the
+   draft cannot resolve.
+5. YOU: check the synthesis + verbatim evidence against the
    Ledger → decide.
 
-Your context receives the script you wrote and the final
-synthesis. The bulk never touches it — that is the entire point
-for a token-frugal chair.
+If the user has opted into multi-agent orchestration, run steps
+2-4 as ONE `Workflow` script instead — `pipeline(sources,
+fetch → brief)` with no barrier, then a synthesis stage; the
+intermediates never touch your context either way.
 
 ## Subagent output contract (enforced)
 

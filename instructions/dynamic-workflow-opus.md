@@ -25,8 +25,8 @@ Opus 4.8, `fable` = Fable 5 today). The haiku tier is RETIRED:
 everything that used to go to haiku goes to sonnet instead.
 
 Effort is a real knob (agent frontmatter `effort:`; Workflow
-`agent()` option `effort:`) — and the policy is simple: every
-delegated worker runs at `max`, mechanical and judgment alike.
+`agent()` option `effort:`) — implementation & judgment → `max`;
+mechanical gathering (no decisions) → `low`.
 
 ## The latency mental model (read this first)
 
@@ -37,9 +37,10 @@ moves, in priority order:
 
 1. **Inline over delegate** when the chair can just do it (most
    bounded/medium tasks).
-2. **Parallel over sequential** when you must delegate — fan out with
-   the `Workflow` tool's `pipeline()`/`parallel()` so wall-clock is the
-   *slowest single chain*, not the *sum of stages*.
+2. **Parallel over sequential** when you must delegate — spawn
+   independent agents in ONE message (or a `Workflow` `pipeline()` when
+   the user opted in) so wall-clock is the *slowest single chain*, not
+   the *sum of stages*.
 3. **Proportional ceremony** — ledger and verification scale with size
    and risk, not applied flat to everything.
 
@@ -99,21 +100,22 @@ for anything that fits in context.
 ## Rule 3 — Parallel writers need isolation (KEPT — correctness)
 
 Read-only agents may share the repo. Agents that EDIT files in parallel
-must each run with `isolation: "worktree"`. Prefer the `Workflow` tool
-for fan-out: it manages concurrency, ordering, and per-agent isolation
-in one script instead of hand-spawned sequential calls.
+must each run with `isolation: "worktree"`. Fan out with parallel Agent
+calls in a single message by default; use the `Workflow` tool only when
+the user has opted into multi-agent orchestration — then one script
+manages concurrency, ordering, and per-agent isolation.
 
 ## Model routing (Opus-in-chair)
 
 - **you (chair)** -> planning, judgment, synthesis, conflict resolution,
   AND bounded/medium implementation. Done INLINE — no round-trip.
-- **sonnet** (Sonnet 5, always `max` effort) -> the fan-out tier for
-  mechanical work, implementation, AND routine judgment: grep/scan,
-  structure listing, fetching pages (fetch only, no filtering),
-  formatting, mechanical edits; parallel implementation workers from
-  a clear spec, tests for designed behavior, routine debugging;
+- **sonnet** (Sonnet 5) -> the fan-out tier for mechanical work,
+  implementation, AND routine judgment: grep/scan, structure listing,
+  fetching pages (fetch only, no filtering), formatting, mechanical
+  edits at `low` effort; parallel implementation workers from a clear
+  spec, tests for designed behavior, routine debugging at `max`;
   fanned-out routine judgment — source briefs, relevance filtering,
-  standard review.
+  standard review — at `max`.
 - **opus (as subagent, `max` effort)** -> ONLY for judgment that must
   run *in parallel* with other work, or for fresh-eyes verification.
   Not for offloading judgment the chair can do in-context.
@@ -127,9 +129,10 @@ in one script instead of hand-spawned sequential calls.
 Do NOT relay sources through sequential hops one at a time. Instead:
 
 1. YOU define the questions + which sources to hit (judgment, inline).
-2. Run a `Workflow` `pipeline()`: each source flows fetch (sonnet,
-   `max`) -> brief (sonnet, `max`) independently, with NO barrier between
-   stages. Source A can be at "brief" while source B is still fetching.
+2. Fan out in ONE message: per source, fetch (sonnet, `low`) writes the
+   raw page to disk, then brief (sonnet, `max`) reads it back. With user
+   opt-in, run it as a `Workflow` `pipeline()` — NO barrier between
+   stages either way.
 3. YOU synthesize the returned briefs inline and check against the
    requirements.
 
@@ -166,8 +169,8 @@ reject and re-run; don't silently accept partial output.
 ## Latency hygiene (your closing checklist)
 
 - Could the chair just do this inline? Then do it — skip the spawn.
-- Spawn independent agents in ONE message; prefer `Workflow`
-  `pipeline()`/`parallel()` over sequential `Agent` calls.
+- Spawn independent agents in ONE message; never sequential `Agent`
+  calls for independent work (`Workflow` `pipeline()` with user opt-in).
 - Don't relay judgment out and back. Don't disk-round-trip medium data.
 - Ledger and verification: proportional to size and risk, never flat.
 - When you do delegate, set `effort` per the policy above (frontmatter

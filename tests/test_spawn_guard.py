@@ -117,6 +117,15 @@ def test_upward_search_stops_at_worktree_boundary(tmp_path):
     assert is_deny(run_hook(SCRIPT, spawn_payload(worktree)))
 
 
+def test_upward_search_stops_at_home(tmp_path):
+    # A ledger above $HOME must not satisfy the gate for sessions below it.
+    write_ledger(tmp_path)
+    home = tmp_path / "home"
+    wd = home / "project"
+    wd.mkdir(parents=True)
+    assert is_deny(run_hook(SCRIPT, spawn_payload(wd), env_extra={"HOME": str(home)}))
+
+
 def test_cache_fallback_when_payload_has_no_model(repo_dir, tmp_path):
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()

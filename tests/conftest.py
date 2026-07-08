@@ -14,7 +14,9 @@ STRIP_ENV = [
     "LEDGER_GUARD_THRESHOLD",
     "LEDGER_GUARD_THRESHOLD_FABLE",
     "LEDGER_GUARD_THRESHOLD_OPUS",
+    "LEDGER_GUARD_STOP_MODE",
     "FABLE_ORCH_PROFILE",
+    "FABLE_ORCH_METRICS",
     "CLAUDE_PLUGIN_ROOT",
 ]
 
@@ -27,6 +29,7 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
     session-cache reads/writes stay inside the test sandbox.
     """
     env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
+    env["FABLE_ORCH_METRICS"] = "0"  # keep tests from writing ~/.claude metrics
     if tmpdir is not None:
         env["TMPDIR"] = str(tmpdir)
         env["TEMP"] = str(tmpdir)
