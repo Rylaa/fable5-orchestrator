@@ -25,10 +25,8 @@ Opus 4.8, `fable` = Fable 5 today). The haiku tier is RETIRED:
 everything that used to go to haiku goes to sonnet instead.
 
 Effort is a real knob (agent frontmatter `effort:`; Workflow
-`agent()` option `effort:`) — spend it where reasoning happens:
-judgment & verification → `max`; implementation → `high` (→ `xhigh`
-when correctness is critical — save `max` for judgment);
-mechanical gathering → `low`.
+`agent()` option `effort:`) — and the policy is simple: every
+delegated worker runs at `max`, mechanical and judgment alike.
 
 ## The latency mental model (read this first)
 
@@ -109,13 +107,13 @@ in one script instead of hand-spawned sequential calls.
 
 - **you (chair)** -> planning, judgment, synthesis, conflict resolution,
   AND bounded/medium implementation. Done INLINE — no round-trip.
-- **sonnet** (Sonnet 5) -> the fan-out tier for mechanical work,
-  implementation, AND routine judgment: grep/scan, structure listing,
-  fetching pages (fetch only, no filtering), formatting, mechanical
-  edits at `low` effort; parallel implementation workers from a clear
-  spec, tests for designed behavior, routine debugging at `high`
-  (→ `xhigh` when critical); fanned-out routine judgment — source
-  briefs, relevance filtering, standard review — at `max`.
+- **sonnet** (Sonnet 5, always `max` effort) -> the fan-out tier for
+  mechanical work, implementation, AND routine judgment: grep/scan,
+  structure listing, fetching pages (fetch only, no filtering),
+  formatting, mechanical edits; parallel implementation workers from
+  a clear spec, tests for designed behavior, routine debugging;
+  fanned-out routine judgment — source briefs, relevance filtering,
+  standard review.
 - **opus (as subagent, `max` effort)** -> ONLY for judgment that must
   run *in parallel* with other work, or for fresh-eyes verification.
   Not for offloading judgment the chair can do in-context.
@@ -130,7 +128,7 @@ Do NOT relay sources through sequential hops one at a time. Instead:
 
 1. YOU define the questions + which sources to hit (judgment, inline).
 2. Run a `Workflow` `pipeline()`: each source flows fetch (sonnet,
-   `low`) -> brief (sonnet, `max`) independently, with NO barrier between
+   `max`) -> brief (sonnet, `max`) independently, with NO barrier between
    stages. Source A can be at "brief" while source B is still fetching.
 3. YOU synthesize the returned briefs inline and check against the
    requirements.

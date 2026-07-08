@@ -21,10 +21,10 @@ This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends t
            ┌─────────────────────────────┼─────────────────────────────┐
            ▼                             ▼                             ▼
 ┌─────────────────────┐       ┌─────────────────────┐       ┌─────────────────────┐
-│   SONNET 5 · low    │       │   SONNET 5 · high   │       │   SONNET 5 · max    │
+│   SONNET 5 · max    │       │   SONNET 5 · max    │       │   SONNET 5 · max    │
 │   mechanical bulk   │       │   implementation    │       │   routine judgment  │
 │   grep·fetch·scan   │       │   code · tests      │       │   briefs · review   │
-│   format · read     │       │   (xhigh critical)  │       │   filtering         │
+│   format · read     │       │   debug · refactor  │       │   filtering         │
 └─────────────────────┘       └─────────────────────┘       └──────────┬──────────┘
                                                                        │ uncertain /
                                                                        │ high stakes
@@ -43,9 +43,9 @@ Fable thinks. Sonnet does. Opus checks. Your limit pays for the thinking only:
 │ Work                                    │ Runs on         │ Fable limit pays    │
 ├─────────────────────────────────────────┼─────────────────┼─────────────────────┤
 │ Phase planning, arbitration, decisions  │ Fable 5 (chair) │ yes — and only this │
-│ Implementation, tests, refactors        │ Sonnet 5 high   │ nothing             │
+│ Implementation, tests, refactors        │ Sonnet 5 max    │ nothing             │
 │ Source briefs, filtering, code review   │ Sonnet 5 max    │ nothing             │
-│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 low    │ nothing             │
+│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 max    │ nothing             │
 │ Fresh-eyes verification, escalations    │ Opus 4.8 max    │ nothing             │
 └─────────────────────────────────────────┴─────────────────┴─────────────────────┘
 ```
@@ -78,7 +78,7 @@ A SessionStart hook detects the chair model and injects the profile that fits it
 └──────────────────────────┴──────────────────────────────┴──────────────────────────────┘
 ```
 
-Both profiles route subagents by tier name (`sonnet`, `opus`, `fable`), keep bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and set effort per spawn: `low` mechanical, `high` implementation (`xhigh` when critical), `max` judgment and verification. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
+Both profiles route subagents by tier name (`sonnet`, `opus`, `fable`), keep bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and run every delegated worker at `max` effort — full depth everywhere; the limit is protected by *who* does the work, not by dialing effort down. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
 
 ### 2 · A Requirements Ledger
 

@@ -25,14 +25,11 @@ to go to haiku goes to sonnet instead.
 Effort is a real knob — agent frontmatter `effort:`, Workflow
 `agent()` option `effort:` — spend it where reasoning happens:
 
-- routine judgment — briefs, relevance filtering, standard
-  review (sonnet) → `max`
+- ALL sonnet workers → `max`, always — mechanical gathering,
+  implementation, and judgment alike. Full depth everywhere;
+  the limit is protected by WHO runs the work, not by dialing
+  effort down.
 - verification & escalation (opus) → `max`, always
-- implementation (sonnet) → `high`; raise to `xhigh` when
-  correctness is critical — save `max` for judgment work
-- mechanical gathering (fetch/grep/format — no decisions) →
-  `low`; these tasks don't reason, extra effort is pure latency
-  and tokens
 
 ## Rule 0 — Orchestration threshold
 
@@ -100,19 +97,18 @@ isolation — and its intermediate results never enter your context.
 
 ## Model routing (by tier)
 
-**sonnet** (Sonnet 5) → the universal worker: mechanical work,
-implementation, AND routine judgment:
+**sonnet** (Sonnet 5, always `max` effort) → the universal
+worker: mechanical work, implementation, AND routine judgment:
 - grep/scan, structure listing, fetching pages (fetch ONLY — no
-  relevance filtering), formatting, mechanical edits — at `low`
-  effort
+  relevance filtering), formatting, mechanical edits
 - code from a clear spec, tests for designed behavior, routine
-  debugging — at `high` (→ `xhigh` when correctness is critical)
+  debugging
 - reading sources/files where fidelity matters, structured
   briefs, relevance filtering, lint-level and standard review,
-  synthesis drafts — at `max`. Sonnet 5 carries the judgment
-  VOLUME; that is what preserves the limit.
+  synthesis drafts. Sonnet 5 carries the judgment VOLUME; that
+  is what preserves the limit.
 - Fetch workers NEVER decide what is relevant or important —
-  filtering is a separate sonnet `max` pass.
+  filtering is a separate sonnet pass.
 
 **opus** (Opus 4.8, always `max` effort) → the VALVE, not the
 default judge. Exactly two duties:
@@ -149,7 +145,7 @@ Do NOT relay sources through your context hop by hop. Author ONE
    belongs to fetch workers), write the Ledger, then write the
    script.
 2. Script: `pipeline(sources, fetch → brief)` — fetch (sonnet,
-   `low`) writes each raw source verbatim to ./.workflow/scratch/
+   `max`) writes each raw source verbatim to ./.workflow/scratch/
    and returns only the path; brief (sonnet, `max`) reads it from
    disk and returns a structured brief (claims, evidence, exact
    quotes, confidence, contradictions flagged). No barrier:
