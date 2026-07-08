@@ -6,7 +6,7 @@
 
 Fable 5 is the best chair a Claude Code session can have — and the most expensive seat in the house. Let it type every token itself and the session ends rate-limited, waiting out the reset window.
 
-This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends tokens only on planning, arbitration, and final decisions. Everything else — implementation, research, briefs, review, bulk reading — goes to **Sonnet 5**. **Opus 4.8** stays on the roster for exactly two jobs: fresh-eyes verification and escalation.
+This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends tokens only on planning, arbitration, and final decisions. Everything else — implementation, research, briefs, review, bulk reading — goes to **Sonnet 5**. **Opus 4.8** stays on the roster as the escalation lane (security reviews pinned there), and the close gets its fresh-eyes verification from **Fable 5** itself — one bounded call per workflow.
 
 ## The division of labor
 
