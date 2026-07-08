@@ -6,7 +6,7 @@
 
 Fable 5 is the best chair a Claude Code session can have: the deepest reasoning, the best arbitration, the longest horizon. It is also the most expensive seat in the house. Let it type every token itself and the session ends the way unmanaged Fable sessions always end: rate-limited, waiting out the reset window.
 
-This plugin makes the obvious split mechanical, so you never have to make that trade. **Fable 5 keeps the chair and spends tokens only on what actually needs Fable-level intelligence** — planning, arbitration, final decisions. Everything else — implementation, research, briefs, review, bulk reading — is routed to **Sonnet 5**, which since the Claude 5 generation is good enough to carry all of it at a third of the limit weight. **Opus 4.8** stays on the roster for exactly two jobs: fresh-eyes verification and escalation.
+This plugin makes the obvious split mechanical, so you never have to make that trade. **Fable 5 keeps the chair and spends tokens only on what actually needs Fable-level intelligence** — planning, arbitration, final decisions. Everything else — implementation, research, briefs, review, bulk reading — is routed to **Sonnet 5**, which since the Claude 5 generation is good enough to carry all of it at a fraction of the limit weight. **Opus 4.8** stays on the roster for exactly two jobs: fresh-eyes verification and escalation.
 
 The goal: a Fable 5 session that lasts your whole workday. No limit anxiety, no waiting for resets.
 
@@ -57,22 +57,20 @@ Fable thinks. Sonnet does. Opus checks. Your limit pays for the thinking only:
 This pairing is deliberate, not a budget compromise.
 
 ```
-┌───────────┬───────────┬────────────┬───────────────────────────────────────────────┐
-│ Model     │ Input $/M │ Output $/M │ Role in this plugin                           │
-├───────────┼───────────┼────────────┼───────────────────────────────────────────────┤
-│ Fable 5   │  $10.00   │   $50.00   │ The brain — plans, arbitrates, decides        │
-│ Opus 4.8  │   $5.00   │   $25.00   │ The valve — fresh-eyes verify + escalation    │
-│ Sonnet 5  │   $3.00   │   $15.00   │ The body — implementation + routine judgment  │
-└───────────┴───────────┴────────────┴───────────────────────────────────────────────┘
-  API list prices (Sonnet 5 intro pricing $2/$10 through 2026-08-31) — the best
-  public proxy for how fast each tier draws down a subscription usage limit.
+┌───────────┬───────────────────────────────────────────────┐
+│ Model     │ Role in this plugin                           │
+├───────────┼───────────────────────────────────────────────┤
+│ Fable 5   │ The brain — plans, arbitrates, decides        │
+│ Opus 4.8  │ The valve — fresh-eyes verify + escalation    │
+│ Sonnet 5  │ The body — implementation + routine judgment  │
+└───────────┴───────────────────────────────────────────────┘
 ```
 
 Three facts make the split work:
 
-- **Fable tokens weigh ~3.3× Sonnet tokens.** Every token of bulk work you keep off the chair directly extends how long you can keep Fable in it. The chair's output should be plans, verdicts, and ledger updates — not code diffs and fetched pages.
+- **Fable tokens are the heaviest draw on your usage limit.** Every token of bulk work you keep off the chair directly extends how long you can keep Fable in it. The chair's output should be plans, verdicts, and ledger updates — not code diffs and fetched pages.
 - **Sonnet 5 closed the gap.** It reaches near-Opus quality on coding and agentic work, and it is the first Sonnet-tier model with the full effort ladder (`low` → `xhigh` → `max`). At `max` effort it carries routine judgment — source briefs, relevance filtering, standard review — that used to require an Opus call.
-- **Opus 4.8 is no longer 5× — but volume still matters.** At ~1.7× a Sonnet call, Opus is affordable; what drains limits is running it on *every* judgment call. So Sonnet carries the judgment volume, and Opus is reserved for where a *different* model genuinely earns its price: the fresh-eyes verification pass (a decorrelated reviewer catches the blind spots Sonnet shares with its own implementation) and the escalation valve (a `sonnet` worker that returns "uncertain" goes up to Opus — never back up to Fable, so your limit stays out of it).
+- **Volume is what drains limits.** So Sonnet carries the judgment volume, and Opus is reserved for where a *different* model genuinely earns its place: the fresh-eyes verification pass (a decorrelated reviewer catches the blind spots Sonnet shares with its own implementation) and the escalation valve (a `sonnet` worker that returns "uncertain" goes up to Opus — never back up to Fable, so your limit stays out of it).
 
 ## What the plugin does
 
