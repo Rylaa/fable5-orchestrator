@@ -16,17 +16,19 @@ preserves both your context window and the user's usage limit.
 
 ## Tiers & effort
 
-Always select subagent models by TIER NAME — `sonnet`, `opus` —
-never by dated model ID. Tier names resolve to the latest model of
-each tier and never go stale (`sonnet` = Sonnet 5, `opus` =
-Opus 4.8 today). The haiku tier is RETIRED: everything that used
-to go to haiku goes to sonnet instead.
+Always select subagent models by TIER NAME — `sonnet`, `opus`,
+`fable` — never by dated model ID. Tier names resolve to the
+latest model of each tier and never go stale (`sonnet` =
+Sonnet 5, `opus` = Opus 4.8, `fable` = Fable 5 today). The haiku
+tier is RETIRED: everything that used to go to haiku goes to
+sonnet instead.
 
 Effort is a real knob — agent frontmatter `effort:`, Workflow
 `agent()` option `effort:` — spend it where reasoning happens:
 
 - implementation & judgment (sonnet) → `max`, always
-- verification & escalation (opus) → `max`, always
+- fresh-eyes verification (fable) → `max`, always
+- escalation (opus, → fable ceiling) → `max`, always
 - mechanical gathering (fetch/grep/format — no decisions) →
   `low`; these tasks don't reason, extra effort is pure latency
 
@@ -114,18 +116,24 @@ implementation, AND routine judgment:
 - Fetch workers NEVER decide what is relevant or important —
   filtering is a separate sonnet pass.
 
-**opus** (Opus 4.8, always `max` effort) → the VALVE, not the
-default judge. Exactly two duties:
-- fresh-eyes verification before closing (see Verification
-  phase) — a different model reviewing sonnet's work catches
-  the blind spots sonnet shares with itself
-- escalation: sonnet returned "uncertain", or the work is
-  predictably hard judgment — security/auth review, architecture
-  tradeoffs, irreversible migrations, debugging that resisted a
-  sonnet pass
-Routine judgment never lands here: opus costs ~1.7× a `max`
-sonnet call and volume is what drains limits — sonnet carries
-the volume, opus guards the close.
+**opus** (Opus 4.8, always `max` effort) → the ESCALATION lane,
+not the default judge:
+- sonnet returned "uncertain", or the work is predictably hard
+  judgment — architecture tradeoffs, irreversible migrations,
+  debugging that resisted a sonnet pass
+- ALL security/adversarial review, always — Fable's safety
+  classifiers can refuse benign security work, so that lane is
+  pinned here
+- fallback: any fable verifier call that gets refused reruns on
+  opus unchanged
+Routine judgment never lands here — sonnet carries the volume.
+
+**fable** (Fable 5, always `max` effort) → fresh-eyes
+verification before closing (see Verification phase), and the
+escalation CEILING: reserved for work opus could not resolve or
+where the blast radius is very large. Bounded on purpose —
+roughly one call per close — because fable spends the same limit
+the chair does.
 
 **you** → phase planning, final arbitration, synthesis that decides
 the answer, and anything that hinges on conversation context only
@@ -179,11 +187,15 @@ silently accept partial output.
 
 ## Verification phase (mandatory before closing)
 
-Spawn a FRESH opus agent (`max` effort) that has NOT worked on the
-task. Give it: the original user request + the Ledger path + the
-work product paths. It reads everything from disk. Its only job:
+Spawn a FRESH fable agent (`max` effort) that has NOT worked on
+the task. Give it: the original user request + the Ledger path +
+the work product paths (diffs, reports — not the raw scratch
+dump; keep the input bounded). It reads from disk. Its only job:
 find what's missing, wrong, or unaddressed, item by item.
 
+- Security-heavy work products → verify on opus instead (Fable's
+  classifiers can refuse benign security content); if a fable
+  verifier refuses for any reason, rerun the same task on opus.
 - Findings → new phases. Re-verify after fixes.
 - CAP: max 3 verify→fix cycles. If findings remain after 3, STOP
   and report the open items to the user — looping further burns
@@ -194,9 +206,12 @@ find what's missing, wrong, or unaddressed, item by item.
 - Steer depth with BOTH knobs: set `effort` per the policy above,
   AND instruct deep, exhaustive reasoning in the prompt wherever a
   decision is being made.
-- Predictably hard → directly opus. No ladder-climbing.
+- Predictably hard → directly opus. No ladder-climbing from
+  sonnet.
 - sonnet returns "uncertain" → straight to opus at `max`; never
   retry on the same tier.
+- opus cannot resolve it, or the blast radius is very large →
+  fable at `max`, the ceiling. Security stays on opus.
 
 ## Your context hygiene
 

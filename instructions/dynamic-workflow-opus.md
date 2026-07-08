@@ -147,11 +147,13 @@ only adds a slow re-read.
 - **High-risk** (security, data loss, money, auth, irreversible,
   many-file refactor) -> spawn a FRESH verifier that has not worked on
   the task: `opus` at `max` effort by default; for the very highest
-  stakes (auth rewrites, migrations, money paths) use `fable` — a tier
-  above the chair. Give it the request + ledger path + work-product
-  paths; it reads from disk and reports what is missing/wrong, item by
-  item. Findings -> fixes -> re-verify. CAP: 3 cycles, then report open
-  items.
+  stakes (migrations, money paths, huge refactors) use `fable` — a
+  tier above the chair. Security-heavy content stays on `opus`
+  (fable's classifiers can refuse benign security work; a refused
+  fable verify reruns on opus). Give it the request + ledger path +
+  work-product paths; it reads from disk and reports what is
+  missing/wrong, item by item. Findings -> fixes -> re-verify. CAP: 3
+  cycles, then report open items.
 - **Ordinary changes** -> verify INLINE: run the tests/build, and do a
   targeted self-review against the requirements. No full re-read pass.
 

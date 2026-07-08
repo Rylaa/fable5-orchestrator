@@ -29,24 +29,25 @@ This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends t
                                                                        │ uncertain /
                                                                        │ high stakes
                                                             ┌──────────▼──────────┐
-                                                            │    OPUS 4.8 · max   │
-                                                            │     the valve:      │
-                                                            │  fresh-eyes verify  │
-                                                            │    + escalation     │
+                                                            │      the valve      │
+                                                            │  verify: FABLE 5    │
+                                                            │  escalate: OPUS 4.8 │
+                                                            │  (→ fable ceiling)  │
                                                             └─────────────────────┘
 ```
 
-Fable thinks. Sonnet does. Opus checks. Your limit pays for the thinking only:
+Fable thinks. Sonnet does. Fable checks the close. Your limit pays for the thinking plus one verification per close:
 
 ```
 ┌─────────────────────────────────────────┬─────────────────┬─────────────────────┐
 │ Work                                    │ Runs on         │ Fable limit pays    │
 ├─────────────────────────────────────────┼─────────────────┼─────────────────────┤
-│ Phase planning, arbitration, decisions  │ Fable 5 (chair) │ yes — and only this │
+│ Phase planning, arbitration, decisions  │ Fable 5 (chair) │ yes                 │
 │ Implementation, tests, refactors        │ Sonnet 5 max    │ nothing             │
 │ Source briefs, filtering, code review   │ Sonnet 5 max    │ nothing             │
 │ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 low    │ nothing             │
-│ Fresh-eyes verification, escalations    │ Opus 4.8 max    │ nothing             │
+│ Fresh-eyes verification (the close)     │ Fable 5 max     │ one call per close  │
+│ Escalations (hard judgment, security)   │ Opus → Fable    │ mostly nothing      │
 └─────────────────────────────────────────┴─────────────────┴─────────────────────┘
 ```
 
@@ -54,7 +55,7 @@ Fable thinks. Sonnet does. Opus checks. Your limit pays for the thinking only:
 
 - **Fable tokens are the heaviest draw on your limit.** Every token of bulk work kept off the chair extends how long Fable stays in it.
 - **Sonnet 5 closed the gap.** Near-Opus quality on coding and agentic work, with the full effort ladder (`low` → `xhigh` → `max`). At `max` it carries the routine judgment — briefs, filtering, standard review — that used to need an Opus call.
-- **Opus 4.8 is the valve, not the default judge.** A different model verifying Sonnet's work catches the blind spots Sonnet shares with itself, and a worker that returns "uncertain" escalates to Opus — never back up to Fable.
+- **The valve is two-tier.** Fresh-eyes verification of the close runs on Fable 5 — the strongest model at the single highest-stakes moment, once per close. Escalations climb sonnet → opus → fable, with security reviews pinned to Opus (Fable's safety classifiers can refuse even benign security work). A worker that returns "uncertain" never bounces back to the chair.
 
 ## What the plugin does
 
