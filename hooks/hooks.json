@@ -14,7 +14,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Agent|Task|Workflow",
+        "matcher": "^(Agent|Task|Workflow)$",
         "hooks": [
           {
             "type": "command",

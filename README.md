@@ -131,7 +131,7 @@ turn ends
        good; LEDGER_GUARD_STOP_MODE=every-turn restores per-turn blocking.
 ```
 
-A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its tmux teammates** — the experimental agent-teams backend parks teammates in `claude-swarm-*` tmux servers and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB across three old sessions); the hook kills the servers whose panes carry this session's `@session-<id>` tag — and any swarm server idle for 48h+, which catches teams orphaned by crashed sessions.
+A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its tmux teammates** — the experimental agent-teams backend parks teammates in `claude-swarm-*` tmux servers and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB across three old sessions); the hook kills the server named with the session's own process id (`claude-swarm-<pid>`, found via the hook's ancestor chain) or whose panes carry its `@session-<id>` tag — and any swarm server idle for 48h+, which catches teams orphaned by crashed sessions.
 
 ## Install
 
@@ -152,7 +152,7 @@ Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent|Task|Workflow",
+        "matcher": "^(Agent|Task|Workflow)$",
         "hooks": [
           { "type": "command", "command": "python3 ~/.claude/hooks/ledger_guard_spawn.py", "timeout": 10 }
         ]
@@ -200,7 +200,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
-**Model detection.** Claude Code delivers the session model only in the SessionStart payload (optional even there — no other hook event receives it). The injector caches `{model, profile}` per session; the spawn guard resolves `FABLE_ORCH_PROFILE` → payload model (future-proofing) → session cache → lean default. Unknown model means lean profile — the heavy Fable discipline never runs silently on the wrong chair. The SessionEnd hook removes the session's temp files and sweeps any older than 48 hours.
+**Model detection.** Claude Code delivers the session model only in the SessionStart payload (optional even there — no other hook event receives it). The injector caches `{model, profile}` per session; the spawn guard resolves `FABLE_ORCH_PROFILE` → payload model (future-proofing) → session cache → lean default. Unknown model means lean profile — the heavy Fable discipline never runs silently on the wrong chair. The SessionEnd hook removes the session's temp files and sweeps any older than 96 hours.
 
 **Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per profile, spawn denies/passes, stop blocks and suppressions. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
 

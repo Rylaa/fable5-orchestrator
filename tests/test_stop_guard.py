@@ -29,6 +29,12 @@ def test_open_items_block(repo_dir, tmp_path):
     assert "- [ ] 1. first" in result["reason"]
 
 
+def test_bare_open_checkbox_counts(repo_dir, tmp_path):
+    # A placeholder "- [ ]" with no text after it is still an open item.
+    write_ledger(repo_dir, "- [ ]\n")
+    assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
+
+
 def test_star_bullets_also_count(repo_dir, tmp_path):
     write_ledger(repo_dir, "* [ ] 1. star bullet\n")
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))

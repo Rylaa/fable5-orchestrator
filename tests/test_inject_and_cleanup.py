@@ -177,8 +177,15 @@ sys.exit(0)
 """
 
 FAKE_PS = """#!/usr/bin/env python3
-import os
-print(os.environ.get("FAKE_PS_OUTPUT", ""))
+import os, sys
+log = os.environ.get("FAKE_PS_LOG")
+if log:
+    with open(log, "a") as f:
+        f.write(" ".join(sys.argv[1:]) + "\\n")
+if "ppid=" in sys.argv:
+    print(os.environ.get("FAKE_PPID", "1"))   # ancestor walk
+else:
+    print(os.environ.get("FAKE_PS_OUTPUT", ""))  # command lookup
 """
 
 
@@ -202,6 +209,7 @@ def _swarm_fixture(tmp_path):
         "TMUX_TMPDIR": str(swarm_root),
         "FABLE_ORCH_SWARM_CLEANUP": "1",
         "FAKE_KILL_LOG": str(kill_log),
+        "FAKE_PS_LOG": str(tmp_path / "ps.log"),
     }
     return env, kill_log
 
@@ -214,6 +222,9 @@ def test_cleanup_reaps_own_swarm(tmp_path):
     assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
     assert kill_log.is_file()
     assert "claude-swarm-111" in kill_log.read_text()
+    # The tag matcher must actually query ps with the pane pids it collected.
+    ps_log = tmp_path / "ps.log"
+    assert ps_log.is_file() and "-p 12345" in ps_log.read_text()
 
 
 def test_cleanup_leaves_other_sessions_swarm(tmp_path):
@@ -232,6 +243,57 @@ def test_cleanup_sweeps_idle_swarm(tmp_path):
     assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
     assert kill_log.is_file()
     assert "claude-swarm-111" in kill_log.read_text()
+
+
+def test_cleanup_reaps_by_ancestor_pid_socket(tmp_path):
+    # Current Claude Code tags teammates with a per-team id, not the parent
+    # session id — the reaper must still find OUR server via its socket
+    # name, claude-swarm-<main pid>, using the hook's ancestor chain.
+    import os
+    import time
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    sock_dir = tmp_path / "tmuxroot" / f"tmux-{os.getuid()}"
+    own = sock_dir / f"claude-swarm-{os.getpid()}"  # test process = hook's parent
+    own.write_text("", encoding="utf-8")
+    env["FAKE_PPID"] = str(os.getpid())
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-otherteam --agent-name w"
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    text = kill_log.read_text(encoding="utf-8") if kill_log.exists() else ""
+    assert f"claude-swarm-{os.getpid()}" in text   # ours: killed via pid match
+    assert "claude-swarm-111" not in text          # foreign tag + fresh: untouched
+
+
+def test_swarm_idle_sweep_disabled_by_zero(tmp_path):
+    # MAX_IDLE_H=0 turns off the idle kill even for ancient servers;
+    # own-session reaping is a separate switch and stays available.
+    import time
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FABLE_ORCH_SWARM_MAX_IDLE_H"] = "0"
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-deadbeef --agent-name w"
+    env["FAKE_WINDOW_ACTIVITY"] = "1000"  # ancient, but the sweep is off
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+
+
+def test_inject_started_falls_back_to_mtime_for_legacy_cache(tmp_path):
+    # A cache written by an older plugin version has no `started`. On the
+    # next re-injection (compact/resume) the injector must anchor to the
+    # file's mtime — never to "now", which would disown the session's
+    # pre-compaction ledgers.
+    import os
+    import time
+
+    cache = tmp_path / "fable-orch-model-s-legacy.json"
+    cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
+    old = time.time() - 7200
+    os.utime(cache, (old, old))
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-legacy"},
+             env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)}, tmpdir=tmp_path)
+    started = json.loads(cache.read_text(encoding="utf-8"))["started"]
+    assert abs(started - old) < 5
 
 
 def test_swarm_cleanup_optout(tmp_path):

@@ -5,7 +5,7 @@ and sweep stale leftovers.
 Three duties, all best-effort (never fails the session):
 
   1. Delete this session's temp files (model cache + stop sidecar), then
-     sweep any fable-orch-*.json older than 48h — SessionEnd doesn't fire
+     sweep any fable-orch-*.json older than 96h — SessionEnd doesn't fire
      for crashed sessions, so the files would otherwise accumulate.
   2. Reap this session's tmux teammates. The experimental agent-teams
      tmux backend (CLAUDE_CODE_SPAWN_BACKEND=tmux) parks teammates in a
@@ -28,8 +28,15 @@ import sys
 import tempfile
 import time
 
-SWEEP_AGE_SECONDS = 48 * 3600
+# Temp-file sweep is 96h (not 48h): a session left open-but-idle for two
+# days would otherwise lose its cache/sidecar to another session's sweep
+# and silently fall back to the lean profile on wake. Files are tiny.
+SWEEP_AGE_SECONDS = 96 * 3600
 METRICS_MAX_BYTES = 5 * 1024 * 1024
+# Hard wall-clock budget for all tmux work at SessionEnd — wedged tmux
+# servers answer at the 5s subprocess timeout each, and the hook itself
+# is killed at 20s; stop early rather than mid-sweep.
+SWARM_BUDGET_SECONDS = 12
 
 
 def _rotate_metrics():
@@ -90,14 +97,52 @@ def _tmux(sock, *args):
     )
 
 
-def reap_own_swarm(session_id):
-    """Kill swarm servers hosting THIS session's teammates. Returns count."""
-    if not session_id:
-        return 0
-    marker = f"@session-{str(session_id)[:8]}"
+def _ancestor_pids(max_hops=12):
+    """PIDs of this process's ancestors. The SessionEnd hook is a child of
+    the main session process, and the tmux backend names each swarm server
+    claude-swarm-<main pid> — so the ancestor chain identifies OUR server
+    regardless of how teammates are tagged."""
+    pids = []
+    pid = os.getpid()
+    for _ in range(max_hops):
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "ppid=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            pid = int(out)
+        except Exception:
+            break
+        if pid <= 1:
+            break
+        pids.append(pid)
+    return pids
+
+
+def reap_own_swarm(session_id, deadline):
+    """Kill swarm servers hosting THIS session's teammates. Returns count.
+
+    Two matchers, either suffices:
+      1. Socket name claude-swarm-<pid> where <pid> is one of this hook's
+         ancestor processes (the main session process) — version-proof.
+      2. Pane command tag @session-<prefix of this session id> — how older
+         Claude Code versions tagged teammates; current versions tag with
+         a per-team id, so this alone is no longer enough.
+    """
+    own_names = {f"claude-swarm-{p}" for p in _ancestor_pids()}
+    marker = f"@session-{str(session_id)[:8]}" if session_id else None
     killed = 0
     for sock in _swarm_sockets():
+        if time.time() > deadline:
+            break
         try:
+            if os.path.basename(sock) in own_names:
+                if _tmux(sock, "list-sessions").returncode == 0:
+                    _tmux(sock, "kill-server")
+                    killed += 1
+                continue
+            if not marker:
+                continue
             r = _tmux(sock, "list-panes", "-a", "-F", "#{pane_pid}")
             if r.returncode != 0:
                 continue  # dead server; the sweep unlinks its socket
@@ -116,11 +161,13 @@ def reap_own_swarm(session_id):
     return killed
 
 
-def sweep_stale_swarms(max_idle_h):
+def sweep_stale_swarms(max_idle_h, deadline):
     """Kill swarm servers idle for max_idle_h+ hours; unlink dead sockets."""
     killed = 0
     cutoff = time.time() - max_idle_h * 3600
     for sock in _swarm_sockets():
+        if time.time() > deadline:
+            break
         try:
             r = _tmux(sock, "list-windows", "-a", "-F", "#{window_activity}")
             if r.returncode != 0:
@@ -177,8 +224,9 @@ def main():
         except ValueError:
             max_idle_h = 48.0
         try:
-            swarm_own = reap_own_swarm(session_id)
-            swarm_stale = sweep_stale_swarms(max_idle_h)
+            deadline = time.time() + SWARM_BUDGET_SECONDS
+            swarm_own = reap_own_swarm(session_id, deadline)
+            swarm_stale = sweep_stale_swarms(max_idle_h, deadline)
         except Exception:
             pass  # no tmux, or no os.getuid (Windows) — never fail the hook
 

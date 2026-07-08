@@ -89,8 +89,9 @@ def owned_by_session(ledger, session_id):
     Session start is the injector cache's immutable `started` field —
     the cache FILE is rewritten on resume/clear/compact re-injections,
     so its mtime moves and serves only as the fallback for caches
-    written by older versions. 60s slack for clock jitter. No cache
-    (manual install) → assume ownership rather than go silent.
+    written by older versions. 5s slack for filesystem timestamp
+    granularity. No cache (manual install) → assume ownership rather
+    than go silent.
     """
     cache = session_model_cache_path(session_id)
     if not cache or not os.path.isfile(cache):
@@ -105,7 +106,7 @@ def owned_by_session(ledger, session_id):
             start = None
         if start is None:
             start = os.path.getmtime(cache)
-        return os.path.getmtime(ledger) >= start - 60.0
+        return os.path.getmtime(ledger) >= start - 5.0
     except OSError:
         return True
 
@@ -160,7 +161,7 @@ def main():
     except Exception:
         return
 
-    open_items = re.findall(r"^\s*[-*] \[ \] .*$", text, flags=re.M)
+    open_items = re.findall(r"^\s*[-*] \[ \](?:\s.*)?$", text, flags=re.M)
     if not open_items:
         return
 

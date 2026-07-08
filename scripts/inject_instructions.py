@@ -97,9 +97,16 @@ def main():
             started = time.time()
             try:
                 with open(cache, encoding="utf-8") as f:
-                    started = float(json.load(f).get("started") or started)
+                    started = float(json.load(f).get("started"))
             except Exception:
-                pass
+                # Cache from an older plugin version (no `started`) or a
+                # corrupt write: fall back to the file's mtime — the old
+                # heuristic — NEVER to "now", which would disown every
+                # ledger touched before this re-injection.
+                try:
+                    started = os.path.getmtime(cache)
+                except OSError:
+                    pass
             with open(cache, "w", encoding="utf-8") as f:
                 json.dump(
                     {"model": model, "profile": profile,
