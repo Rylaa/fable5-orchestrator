@@ -17,6 +17,9 @@ STRIP_ENV = [
     "LEDGER_GUARD_STOP_MODE",
     "FABLE_ORCH_PROFILE",
     "FABLE_ORCH_METRICS",
+    "FABLE_ORCH_SWARM_CLEANUP",
+    "FABLE_ORCH_SWARM_MAX_IDLE_H",
+    "TMUX_TMPDIR",
     "CLAUDE_PLUGIN_ROOT",
 ]
 
@@ -29,7 +32,8 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
     session-cache reads/writes stay inside the test sandbox.
     """
     env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
-    env["FABLE_ORCH_METRICS"] = "0"  # keep tests from writing ~/.claude metrics
+    env["FABLE_ORCH_METRICS"] = "0"        # keep tests from writing ~/.claude metrics
+    env["FABLE_ORCH_SWARM_CLEANUP"] = "0"  # keep tests away from real tmux servers
     if tmpdir is not None:
         env["TMPDIR"] = str(tmpdir)
         env["TEMP"] = str(tmpdir)

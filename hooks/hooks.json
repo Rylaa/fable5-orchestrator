@@ -43,8 +43,8 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup_session_cache.py\"",
-            "timeout": 10,
-            "statusMessage": "Orchestrator cache cleanup"
+            "timeout": 20,
+            "statusMessage": "Orchestrator cleanup (cache + teammates)"
           }
         ]
       }

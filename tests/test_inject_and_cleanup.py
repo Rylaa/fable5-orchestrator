@@ -130,6 +130,100 @@ def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
     assert fresh.exists()      # other live sessions' files stay
 
 
+FAKE_TMUX = """#!/usr/bin/env python3
+import os, sys
+args = sys.argv[1:]
+sock = args[1] if len(args) > 1 and args[0] == "-S" else ""
+cmd = args[2] if len(args) > 2 else ""
+if os.environ.get("FAKE_TMUX_DEAD") == "1":
+    sys.stderr.write("no server running\\n")
+    sys.exit(1)
+if cmd == "list-panes":
+    print(os.environ.get("FAKE_PANE_PIDS", "12345"))
+elif cmd == "list-windows":
+    print(os.environ.get("FAKE_WINDOW_ACTIVITY", "0"))
+elif cmd == "kill-server":
+    with open(os.environ["FAKE_KILL_LOG"], "a") as f:
+        f.write(sock + "\\n")
+sys.exit(0)
+"""
+
+FAKE_PS = """#!/usr/bin/env python3
+import os
+print(os.environ.get("FAKE_PS_OUTPUT", ""))
+"""
+
+
+def _swarm_fixture(tmp_path):
+    """Fake tmux/ps on PATH + a fake socket dir with one swarm socket."""
+    import os as _os
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("tmux", FAKE_TMUX), ("ps", FAKE_PS)):
+        p = bin_dir / name
+        p.write_text(body, encoding="utf-8")
+        _os.chmod(p, 0o755)
+    swarm_root = tmp_path / "tmuxroot"
+    sock_dir = swarm_root / f"tmux-{_os.getuid()}"
+    sock_dir.mkdir(parents=True)
+    (sock_dir / "claude-swarm-111").write_text("", encoding="utf-8")
+    kill_log = tmp_path / "kills.log"
+    env = {
+        "PATH": f"{bin_dir}:{_os.environ.get('PATH', '')}",
+        "TMUX_TMPDIR": str(swarm_root),
+        "FABLE_ORCH_SWARM_CLEANUP": "1",
+        "FAKE_KILL_LOG": str(kill_log),
+    }
+    return env, kill_log
+
+
+def test_cleanup_reaps_own_swarm(tmp_path):
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-s-swarm- --agent-name worker"
+    import time
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))  # fresh — sweep must not fire
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    assert kill_log.is_file()
+    assert "claude-swarm-111" in kill_log.read_text()
+
+
+def test_cleanup_leaves_other_sessions_swarm(tmp_path):
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-deadbeef --agent-name worker"
+    import time
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+
+
+def test_cleanup_sweeps_idle_swarm(tmp_path):
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-deadbeef --agent-name worker"
+    env["FAKE_WINDOW_ACTIVITY"] = "1000"  # ancient — way past the 48h window
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    assert kill_log.is_file()
+    assert "claude-swarm-111" in kill_log.read_text()
+
+
+def test_swarm_cleanup_optout(tmp_path):
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FABLE_ORCH_SWARM_CLEANUP"] = "0"
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-s-swarm- --agent-name worker"
+    env["FAKE_WINDOW_ACTIVITY"] = "1000"
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+
+
+def test_cleanup_unlinks_dead_socket(tmp_path):
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FAKE_TMUX_DEAD"] = "1"
+    sock = tmp_path / "tmuxroot" / f"tmux-{__import__('os').getuid()}" / "claude-swarm-111"
+    assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
+    assert not sock.exists()
+    assert not kill_log.exists()
+
+
 def test_cleanup_without_session_id_is_noop(tmp_path):
     assert run_hook(CLEANUP, {}, tmpdir=tmp_path) is None
 

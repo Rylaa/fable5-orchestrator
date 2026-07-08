@@ -131,7 +131,7 @@ turn ends
        good; LEDGER_GUARD_STOP_MODE=every-turn restores per-turn blocking.
 ```
 
-A fourth hook (`SessionEnd`) removes the session's temp-dir model cache.
+A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its tmux teammates** — the experimental agent-teams backend parks teammates in `claude-swarm-*` tmux servers and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB across three old sessions); the hook kills the servers whose panes carry this session's `@session-<id>` tag — and any swarm server idle for 48h+, which catches teams orphaned by crashed sessions.
 
 ## Install
 
@@ -195,6 +195,8 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ LEDGER_GUARD_THRESHOLD_OPUS   │ 4000               │ spawn gate under the lean profile         │
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking     │
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging          │
+│ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables teammate reaping at SessionEnd │
+│ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables   │
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
@@ -208,7 +210,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 python3 -m pytest tests/ -q
 ```
 
-The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — thresholds per model, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, and cache cleanup.
+The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — thresholds per model, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH).
 
 ## Honest limitations
 
@@ -217,6 +219,7 @@ The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as 
 - Marking `- [x]` without actually verifying is possible; mechanizing further would invite ritual compliance.
 - Detection keys on the model string — anything containing `fable` gets the Fable profile; force with `FABLE_ORCH_PROFILE` otherwise.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
+- Teammate reaping runs at clean SessionEnd; teams orphaned by a crash are only caught later, by the idle sweep at the next clean session end.
 - The orchestration discipline itself is prompt-level; the hooks fence exactly two failure points — the two that get skipped the most.
 
 ## Why these two guards

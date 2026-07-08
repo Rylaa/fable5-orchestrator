@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
-"""SessionEnd hook: remove this session's temp files and sweep stale ones.
+"""SessionEnd hook: remove this session's temp files, reap its tmux teammates,
+and sweep stale leftovers.
 
-The SessionStart injector caches {model, profile} per session, and the
-stop guard keeps a per-session reminder sidecar. This hook deletes both
-for the session that just ended, then sweeps any fable-orch-*.json in
-the temp dir older than 48 hours — SessionEnd doesn't fire for crashed
-or killed sessions, so without the sweep the files accumulate (39
-observed in a single day in the wild). Best effort — never fails the
-session.
+Three duties, all best-effort (never fails the session):
+
+  1. Delete this session's temp files (model cache + stop sidecar), then
+     sweep any fable-orch-*.json older than 48h — SessionEnd doesn't fire
+     for crashed sessions, so the files would otherwise accumulate.
+  2. Reap this session's tmux teammates. The experimental agent-teams
+     tmux backend (CLAUDE_CODE_SPAWN_BACKEND=tmux) parks teammates in a
+     claude-swarm-* tmux server and does NOT reap them when the session
+     ends — measured in the wild: 63 orphaned agents holding ~5 GB RSS
+     across three old sessions. Teammate panes carry
+     `--agent-id <name>@session-<prefix>` on their command line; a
+     server whose panes match this session's prefix is killed.
+  3. Sweep swarm servers with no window activity for
+     FABLE_ORCH_SWARM_MAX_IDLE_H hours (default 48; 0 disables) —
+     catches teams orphaned by crashed sessions. Dead sockets are
+     unlinked.
+
+FABLE_ORCH_SWARM_CLEANUP=0 disables duties 2 and 3 entirely.
 """
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -40,6 +53,78 @@ def _metric(event, session_id=None, **extra):
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
+
+
+def _swarm_dir():
+    """tmux socket directory (tmux uses TMUX_TMPDIR or /tmp, NOT $TMPDIR)."""
+    base = os.environ.get("TMUX_TMPDIR") or "/tmp"
+    return os.path.join(base, f"tmux-{os.getuid()}")
+
+
+def _swarm_sockets():
+    try:
+        d = _swarm_dir()
+        return [os.path.join(d, n) for n in sorted(os.listdir(d))
+                if n.startswith("claude-swarm-")]
+    except OSError:
+        return []
+
+
+def _tmux(sock, *args):
+    return subprocess.run(
+        ["tmux", "-S", sock, *args],
+        capture_output=True, text=True, timeout=5,
+    )
+
+
+def reap_own_swarm(session_id):
+    """Kill swarm servers hosting THIS session's teammates. Returns count."""
+    if not session_id:
+        return 0
+    marker = f"@session-{str(session_id)[:8]}"
+    killed = 0
+    for sock in _swarm_sockets():
+        try:
+            r = _tmux(sock, "list-panes", "-a", "-F", "#{pane_pid}")
+            if r.returncode != 0:
+                continue  # dead server; the sweep unlinks its socket
+            pids = ",".join(p for p in r.stdout.split() if p.isdigit())
+            if not pids:
+                continue
+            ps = subprocess.run(
+                ["ps", "-o", "command=", "-p", pids],
+                capture_output=True, text=True, timeout=5,
+            )
+            if marker in (ps.stdout or ""):
+                _tmux(sock, "kill-server")
+                killed += 1
+        except Exception:
+            continue
+    return killed
+
+
+def sweep_stale_swarms(max_idle_h):
+    """Kill swarm servers idle for max_idle_h+ hours; unlink dead sockets."""
+    killed = 0
+    cutoff = time.time() - max_idle_h * 3600
+    for sock in _swarm_sockets():
+        try:
+            r = _tmux(sock, "list-windows", "-a", "-F", "#{window_activity}")
+            if r.returncode != 0:
+                try:
+                    os.remove(sock)  # server already gone; socket is litter
+                except OSError:
+                    pass
+                continue
+            if max_idle_h <= 0:
+                continue
+            acts = [int(x) for x in r.stdout.split() if x.isdigit()]
+            if acts and max(acts) < cutoff:
+                _tmux(sock, "kill-server")
+                killed += 1
+        except Exception:
+            continue
+    return killed
 
 
 def main():
@@ -72,7 +157,16 @@ def main():
     except Exception:
         pass
 
-    _metric("cleanup", session_id)
+    swarm_own = swarm_stale = 0
+    if (os.environ.get("FABLE_ORCH_SWARM_CLEANUP") or "").strip() != "0":
+        try:
+            max_idle_h = float(os.environ.get("FABLE_ORCH_SWARM_MAX_IDLE_H") or 48)
+        except ValueError:
+            max_idle_h = 48.0
+        swarm_own = reap_own_swarm(session_id)
+        swarm_stale = sweep_stale_swarms(max_idle_h)
+
+    _metric("cleanup", session_id, swarm_own=swarm_own, swarm_stale=swarm_stale)
 
 
 if __name__ == "__main__":
