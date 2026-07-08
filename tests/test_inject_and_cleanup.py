@@ -146,7 +146,7 @@ def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
     sidecar.write_text("{}", encoding="utf-8")
     stale = tmp_path / "fable-orch-model-dead-session.json"
     stale.write_text("{}", encoding="utf-8")
-    old = time.time() - 72 * 3600
+    old = time.time() - 120 * 3600  # past the 96h sweep window
     os.utime(stale, (old, old))
     fresh = tmp_path / "fable-orch-model-alive.json"
     fresh.write_text("{}", encoding="utf-8")
@@ -154,7 +154,7 @@ def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
     assert run_hook(CLEANUP, {"session_id": "s-clean"}, tmpdir=tmp_path) is None
     assert not cache.exists()
     assert not sidecar.exists()
-    assert not stale.exists()  # older than the 48h sweep window
+    assert not stale.exists()  # older than the 96h sweep window
     assert fresh.exists()      # other live sessions' files stay
 
 
