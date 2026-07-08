@@ -25,9 +25,11 @@ to go to haiku goes to sonnet instead.
 Effort is a real knob — agent frontmatter `effort:`, Workflow
 `agent()` option `effort:` — spend it where reasoning happens:
 
-- judgment & verification (opus) → `max`, always
-- implementation (sonnet) → `high`; raise to `max` when
-  correctness is critical
+- routine judgment — briefs, relevance filtering, standard
+  review (sonnet) → `max`
+- verification & escalation (opus) → `max`, always
+- implementation (sonnet) → `high`; raise to `xhigh` when
+  correctness is critical — save `max` for judgment work
 - mechanical gathering (fetch/grep/format — no decisions) →
   `low`; these tasks don't reason, extra effort is pure latency
   and tokens
@@ -98,23 +100,32 @@ isolation — and its intermediate results never enter your context.
 
 ## Model routing (by tier)
 
-**sonnet** (Sonnet 5) → mechanical work AND standard
-implementation:
+**sonnet** (Sonnet 5) → the universal worker: mechanical work,
+implementation, AND routine judgment:
 - grep/scan, structure listing, fetching pages (fetch ONLY — no
   relevance filtering), formatting, mechanical edits — at `low`
   effort
-- code from a clear spec, tests for designed behavior, lint-level
-  review, routine debugging — at `high` (→ `max` when critical)
-- Fetch workers NEVER decide what is relevant or important.
+- code from a clear spec, tests for designed behavior, routine
+  debugging — at `high` (→ `xhigh` when correctness is critical)
+- reading sources/files where fidelity matters, structured
+  briefs, relevance filtering, lint-level and standard review,
+  synthesis drafts — at `max`. Sonnet 5 carries the judgment
+  VOLUME; that is what preserves the limit.
+- Fetch workers NEVER decide what is relevant or important —
+  filtering is a separate sonnet `max` pass.
 
-**opus** (Opus 4.8, always `max` effort) → everything involving
-judgment (use liberally):
-- Reading sources/files where fidelity matters — opus reads raw
-  material directly from disk; never force lossy fetch→summary
-  chains when detail preservation is the goal
-- Relevance filtering of research sources
-- Architecture, tradeoffs, hard debugging, security/adversarial
-  review, conflict resolution, synthesis
+**opus** (Opus 4.8, always `max` effort) → the VALVE, not the
+default judge. Exactly two duties:
+- fresh-eyes verification before closing (see Verification
+  phase) — a different model reviewing sonnet's work catches
+  the blind spots sonnet shares with itself
+- escalation: sonnet returned "uncertain", or the work is
+  predictably hard judgment — security/auth review, architecture
+  tradeoffs, irreversible migrations, debugging that resisted a
+  sonnet pass
+Routine judgment never lands here: opus costs ~1.7× a `max`
+sonnet call and volume is what drains limits — sonnet carries
+the volume, opus guards the close.
 
 **you** → phase planning, final arbitration, synthesis that decides
 the answer, and anything that hinges on conversation context only
@@ -139,12 +150,14 @@ Do NOT relay sources through your context hop by hop. Author ONE
    script.
 2. Script: `pipeline(sources, fetch → brief)` — fetch (sonnet,
    `low`) writes each raw source verbatim to ./.workflow/scratch/
-   and returns only the path; brief (opus, `max`) reads it from
+   and returns only the path; brief (sonnet, `max`) reads it from
    disk and returns a structured brief (claims, evidence, exact
    quotes, confidence, contradictions flagged). No barrier:
    source A can be at "brief" while source B still fetches.
-3. opus (`max`), as the final stage or one more agent() call:
-   synthesize the briefs.
+3. sonnet (`max`), as the final stage or one more agent() call:
+   synthesize the briefs into a draft answer; escalate to opus
+   (`max`) only if sources conflict in ways the draft cannot
+   resolve.
 4. YOU: check the synthesis + verbatim evidence against the
    Ledger → decide.
 
