@@ -131,7 +131,7 @@ turn ends
        good; LEDGER_GUARD_STOP_MODE=every-turn restores per-turn blocking.
 ```
 
-A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its tmux teammates** — the experimental agent-teams backend parks teammates in `claude-swarm-*` tmux servers and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB across three old sessions); the hook kills the server named with the session's own process id (`claude-swarm-<pid>`, found via the hook's ancestor chain) or whose panes carry its `@session-<id>` tag — and any swarm server idle for 48h+, which catches teams orphaned by crashed sessions.
+A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its tmux teammates** — the experimental agent-teams backend parks teammates in `claude-swarm-*` tmux servers and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB across three old sessions); the hook kills the server named with the session's own process id (`claude-swarm-<pid>`, found via the hook's ancestor chain) or whose panes carry its `@session-<id>` tag — and any swarm server idle for 48h+, which catches teams orphaned by crashed sessions. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes whose clock hasn't moved for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 2) — pane-level, so working siblings are untouched.
 
 ## Install
 
@@ -195,8 +195,9 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ LEDGER_GUARD_THRESHOLD_OPUS   │ 4000               │ spawn gate under the lean profile         │
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking     │
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging          │
-│ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables teammate reaping at SessionEnd │
+│ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping           │
 │ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables   │
+│ FABLE_ORCH_TEAMMATE_IDLE_H    │ 2                  │ kill teammate panes idle ≥ N hours; 0 off │
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
@@ -219,7 +220,7 @@ The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as 
 - Marking `- [x]` without actually verifying is possible; mechanizing further would invite ritual compliance.
 - Detection keys on the model string — anything containing `fable` gets the Fable profile; force with `FABLE_ORCH_PROFILE` otherwise.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
-- Teammate reaping runs at clean SessionEnd; teams orphaned by a crash are only caught later, by the idle sweep at the next clean session end.
+- Pane idleness is a CPU heuristic: a teammate silently blocked for hours inside one external command (a long build) looks idle and can be reaped — raise or disable `FABLE_ORCH_TEAMMATE_IDLE_H` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
 - The orchestration discipline itself is prompt-level; the hooks fence exactly two failure points — the two that get skipped the most.
 
 ## Why these two guards

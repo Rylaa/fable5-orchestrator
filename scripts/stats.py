@@ -38,6 +38,7 @@ def main():
     profiles = Counter()
     ledgers = Counter()
     swarm_reaped = 0
+    panes_reaped = 0
 
     for rec in records(path):
         event = rec.get("event") or "?"
@@ -56,6 +57,11 @@ def main():
             try:
                 swarm_reaped += int(rec.get("swarm_own") or 0)
                 swarm_reaped += int(rec.get("swarm_stale") or 0)
+            except (TypeError, ValueError):
+                pass
+        if event == "teammate_reap":
+            try:
+                panes_reaped += int(rec.get("killed") or 0)
             except (TypeError, ValueError):
                 pass
 
@@ -81,6 +87,8 @@ def main():
 
     if swarm_reaped:
         print(f"\ntmux teammate servers reaped: {swarm_reaped}")
+    if panes_reaped:
+        print(f"idle teammate panes reaped: {panes_reaped}")
 
     if ledgers:
         print("\n== stop blocks by ledger ==")

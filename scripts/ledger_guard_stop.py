@@ -20,10 +20,17 @@ The ledger is searched from the working directory upward, stopping at
 the first directory containing .git (a FILE in worktrees/submodules —
 still a boundary) or at $HOME, so a ledger above the home directory can
 never hold unrelated sessions.
+
+Piggybacked duty: because this hook fires at every turn end of every
+session, it also runs the rate-limited teammate-pane sweep (see
+reap_idle_teammates) — finished teammates die within roughly
+FABLE_ORCH_TEAMMATE_IDLE_H hours instead of waiting for a SessionEnd
+that may be days away.
 """
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -141,12 +148,156 @@ def record_reminder(session_id, ledger):
         pass
 
 
+TEAMMATE_SWEEP_INTERVAL = 1800  # at most one pane sweep per 30 minutes
+TEAMMATE_SWEEP_BUDGET = 4       # seconds of wall clock per sweep
+
+
+def _swarm_sockets():
+    """claude-swarm-* sockets (tmux uses TMUX_TMPDIR or /tmp, NOT $TMPDIR)."""
+    try:
+        base = os.environ.get("TMUX_TMPDIR") or "/tmp"
+        d = os.path.join(base, f"tmux-{os.getuid()}")
+        return [os.path.join(d, n) for n in sorted(os.listdir(d))
+                if n.startswith("claude-swarm-")]
+    except Exception:
+        return []
+
+
+def _tmux(sock, *args):
+    return subprocess.run(["tmux", "-S", sock, *args],
+                          capture_output=True, text=True, timeout=5)
+
+
+def _cpu_seconds(text):
+    """Parse a ps cputime ([DD-]HH:MM:SS[.ff] or MM:SS[.ff]) into seconds."""
+    text = text.strip()
+    days = 0
+    if "-" in text:
+        day_part, text = text.split("-", 1)
+        try:
+            days = int(day_part)
+        except ValueError:
+            return None
+    try:
+        parts = [float(p) for p in text.split(":")]
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    seconds = 0.0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return days * 86400 + seconds
+
+
+def reap_idle_teammates(session_id):
+    """Kill teammate panes whose CPU clock hasn't moved for
+    FABLE_ORCH_TEAMMATE_IDLE_H hours (default 2; 0 disables).
+
+    The agent-teams backend parks finished teammates in their tmux panes
+    for the whole life of the parent session. Server-level activity can't
+    see one idle pane among working siblings (all panes share a window),
+    so idleness is measured PER PANE: two CPU samples at least the
+    threshold apart with no movement. Active panes are never touched and
+    a first sighting is never killed. Rate-limited via the state file's
+    mtime. Killing the last pane ends the tmux session, so emptied
+    servers exit on their own.
+    """
+    if (os.environ.get("FABLE_ORCH_SWARM_CLEANUP") or "").strip() == "0":
+        return
+    try:
+        idle_h = float(os.environ.get("FABLE_ORCH_TEAMMATE_IDLE_H") or 2)
+    except ValueError:
+        idle_h = 2.0
+    if idle_h <= 0:
+        return
+
+    state_path = os.path.join(os.path.expanduser("~"), ".claude",
+                              "fable-orch", "swarm-state.json")
+    now = time.time()
+    try:
+        if now - os.path.getmtime(state_path) < TEAMMATE_SWEEP_INTERVAL:
+            return
+    except OSError:
+        pass  # no state yet — first sweep
+    try:
+        with open(state_path, encoding="utf-8") as f:
+            panes = json.load(f).get("panes") or {}
+    except Exception:
+        panes = {}
+
+    deadline = now + TEAMMATE_SWEEP_BUDGET
+    seen = set()
+    killed = 0
+    for sock in _swarm_sockets():
+        if time.time() > deadline:
+            seen.update(panes)  # out of budget: keep unvisited samples
+            break
+        try:
+            r = _tmux(sock, "list-panes", "-a", "-F", "#{pane_id} #{pane_pid}")
+            if r.returncode != 0:
+                continue
+            pane_ids = {}
+            for line in r.stdout.splitlines():
+                bits = line.split()
+                if len(bits) == 2 and bits[1].isdigit():
+                    pane_ids[bits[1]] = bits[0]
+            if not pane_ids:
+                continue
+            ps = subprocess.run(
+                ["ps", "-o", "pid=,cputime=,command=", "-p", ",".join(pane_ids)],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in ps.stdout.splitlines():
+                bits = line.split(None, 2)
+                if len(bits) < 3:
+                    continue
+                pid, cpu_text, command = bits
+                if pid not in pane_ids or "--agent-id" not in command:
+                    continue  # not a teammate pane — never touch it
+                cpu = _cpu_seconds(cpu_text)
+                if cpu is None:
+                    continue
+                seen.add(pid)
+                prev = panes.get(pid)
+                if not prev or cpu != prev.get("cpu"):
+                    panes[pid] = {"cpu": cpu, "since": round(now, 3)}
+                    continue  # active, or first sighting: (re)baseline
+                if now - float(prev.get("since") or now) >= idle_h * 3600:
+                    _tmux(sock, "kill-pane", "-t", pane_ids[pid])
+                    panes.pop(pid, None)
+                    seen.discard(pid)
+                    killed += 1
+        except Exception:
+            continue
+
+    panes = {p: v for p, v in panes.items() if p in seen}
+    try:
+        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump({"panes": panes, "swept": round(now, 3)}, f)
+    except Exception:
+        pass
+    if killed:
+        _metric("teammate_reap", session_id, killed=killed)
+
+
 def main():
     try:
         data = json.load(sys.stdin)
     except Exception:
-        return
+        data = None
+    try:
+        if data is not None:
+            run_guard(data)
+    finally:
+        try:
+            reap_idle_teammates((data or {}).get("session_id"))
+        except Exception:
+            pass  # cleanup is best-effort; the guard's decision already went out
 
+
+def run_guard(data):
     # Loop guard: we already blocked this stop once; let it through now.
     if data.get("stop_hook_active"):
         return

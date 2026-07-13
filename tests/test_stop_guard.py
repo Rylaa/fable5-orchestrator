@@ -156,3 +156,65 @@ def test_ledger_at_home_still_found(tmp_path):
 
 def test_malformed_input_passes():
     assert run_hook(SCRIPT, raw="{{{") is None
+
+
+# --- teammate pane reaping (piggybacked on the Stop hook) -------------------
+
+def _pane_env(tmp_path):
+    from test_inject_and_cleanup import _swarm_fixture
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    env["HOME"] = str(home)
+    return env, kill_log, home
+
+
+def _seed_pane_state(home, cpu=5.0, since_ago=7200, stale_marker=True):
+    d = home / ".claude" / "fable-orch"
+    d.mkdir(parents=True, exist_ok=True)
+    state = d / "swarm-state.json"
+    state.write_text(json.dumps(
+        {"panes": {"12345": {"cpu": cpu, "since": time.time() - since_ago}}}),
+        encoding="utf-8")
+    if stale_marker:
+        old = time.time() - 3600  # let the 30-min rate limit allow a sweep
+        os.utime(state, (old, old))
+    return state
+
+
+def test_idle_teammate_pane_reaped(repo_dir, tmp_path):
+    # CPU sample matches the previous one (0:05.00) and the baseline is 2h
+    # old -> the pane is a finished teammate and gets killed.
+    env, kill_log, home = _pane_env(tmp_path)
+    _seed_pane_state(home)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert kill_log.is_file()
+    assert "pane" in kill_log.read_text(encoding="utf-8")
+
+
+def test_active_teammate_pane_survives(repo_dir, tmp_path):
+    # CPU moved since the last sample -> active worker; re-baseline, no kill.
+    env, kill_log, home = _pane_env(tmp_path)
+    state = _seed_pane_state(home, cpu=4.0)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+    rebaselined = json.loads(state.read_text(encoding="utf-8"))["panes"]["12345"]
+    assert rebaselined["cpu"] == 5.0  # fresh sample, idle clock restarted
+
+
+def test_first_sighting_never_reaped(repo_dir, tmp_path):
+    # No prior state: the sweep only takes a baseline, never kills.
+    env, kill_log, home = _pane_env(tmp_path)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+    state = home / ".claude" / "fable-orch" / "swarm-state.json"
+    assert json.loads(state.read_text(encoding="utf-8"))["panes"]["12345"]["cpu"] == 5.0
+
+
+def test_pane_sweep_rate_limited(repo_dir, tmp_path):
+    # State file written moments ago -> the sweep is skipped entirely.
+    env, kill_log, home = _pane_env(tmp_path)
+    _seed_pane_state(home, stale_marker=False)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()

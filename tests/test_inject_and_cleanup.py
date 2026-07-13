@@ -167,9 +167,12 @@ if os.environ.get("FAKE_TMUX_DEAD") == "1":
     sys.stderr.write("no server running\\n")
     sys.exit(1)
 if cmd == "list-panes":
-    print(os.environ.get("FAKE_PANE_PIDS", "12345"))
+    print(os.environ.get("FAKE_PANES", "%1 12345"))
 elif cmd == "list-windows":
     print(os.environ.get("FAKE_WINDOW_ACTIVITY", "0"))
+elif cmd == "kill-pane":
+    with open(os.environ["FAKE_KILL_LOG"], "a") as f:
+        f.write("pane " + sock + " " + " ".join(args[3:]) + "\\n")
 elif cmd == "kill-server":
     with open(os.environ["FAKE_KILL_LOG"], "a") as f:
         f.write(sock + "\\n")
@@ -184,6 +187,9 @@ if log:
         f.write(" ".join(sys.argv[1:]) + "\\n")
 if "ppid=" in sys.argv:
     print(os.environ.get("FAKE_PPID", "1"))   # ancestor walk
+elif any("cputime" in a for a in sys.argv):
+    print(os.environ.get("FAKE_PS_PANE",       # pane idle sampling
+          "12345 0:05.00 claude --agent-id w@session-t --agent-name w"))
 else:
     print(os.environ.get("FAKE_PS_OUTPUT", ""))  # command lookup
 """
