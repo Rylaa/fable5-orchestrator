@@ -10,7 +10,7 @@ def context_of(result):
     return result["hookSpecificOutput"]["additionalContext"]
 
 
-def test_fable_model_injects_fable_profile(tmp_path):
+def test_injects_the_fable_profile(tmp_path):
     result = run_hook(
         INJECT,
         {"model": "claude-fable-5", "session_id": "s-fable"},
@@ -20,39 +20,32 @@ def test_fable_model_injects_fable_profile(tmp_path):
     assert "(FABLE profile)" in context_of(result)
     cache = tmp_path / "fable-orch-model-s-fable.json"
     assert cache.is_file()
-    assert json.loads(cache.read_text())["profile"] == "fable"
+    data = json.loads(cache.read_text())
+    assert data["model"] == "claude-fable-5"
+    assert "started" in data
 
 
-def test_1m_suffix_detected_as_fable(tmp_path):
+def test_any_model_gets_the_fable_profile(tmp_path):
+    # Fable-only plugin: the same profile is injected regardless of model.
     result = run_hook(
         INJECT,
-        {"model": "claude-fable-5[1m]", "session_id": "s-1m"},
+        {"model": "claude-sonnet-5", "session_id": "s-sonnet"},
         env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
         tmpdir=tmp_path,
     )
     assert "(FABLE profile)" in context_of(result)
 
 
-def test_missing_model_defaults_to_lean_profile(tmp_path):
+def test_missing_model_still_injects(tmp_path):
     result = run_hook(
         INJECT,
         {"session_id": "s-nomodel"},
         env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
         tmpdir=tmp_path,
     )
-    assert "(OPUS / lean profile)" in context_of(result)
-    cache = tmp_path / "fable-orch-model-s-nomodel.json"
-    assert json.loads(cache.read_text())["profile"] == "opus"
-
-
-def test_env_override_forces_profile(tmp_path):
-    result = run_hook(
-        INJECT,
-        {"model": "claude-sonnet-5", "session_id": "s-forced"},
-        env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO), "FABLE_ORCH_PROFILE": "fable"},
-        tmpdir=tmp_path,
-    )
     assert "(FABLE profile)" in context_of(result)
+    cache = tmp_path / "fable-orch-model-s-nomodel.json"
+    assert "started" in json.loads(cache.read_text())
 
 
 def test_plugin_root_fallback_to_script_location(tmp_path):
@@ -82,7 +75,7 @@ def test_metrics_written_when_enabled(tmp_path):
     assert log.is_file()
     rec = json.loads(log.read_text(encoding="utf-8").strip().splitlines()[0])
     assert rec["event"] == "inject"
-    assert rec["profile"] == "fable"
+    assert rec["model"] == "claude-fable-5"
 
 
 def test_metrics_optout(tmp_path):

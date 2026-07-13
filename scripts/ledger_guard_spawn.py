@@ -17,48 +17,23 @@ Exempt:
     full conversation context, so the ledger is already in front
     of it; forcing a file adds nothing.
 
-The threshold is MODEL-AWARE. The Fable profile keeps a strict gate
-(small delegations should still carry a ledger, because Fable tokens
-are the scarce resource). The lean Opus profile raises the gate: a
-large-context chair model fans out with rich agent prompts as normal
-practice, and the ledger is meant to be *proportional* — only
-large/parallel/high-risk work writes a file.
-
-Profile resolution order:
-    1. FABLE_ORCH_PROFILE env override (fable | opus)
-    2. top-level `model` string in the hook payload (future-proofing:
-       per the Claude Code hooks reference, `model` is delivered only
-       on SessionStart today — PreToolUse carries none)
-    3. per-session cache written by the SessionStart hook
-    4. default: lean 'opus' (never over-block)
+The threshold defaults to 1500 chars — strict on purpose. This
+plugin is built for a Claude Fable 5 chair, where even small
+delegations should carry a ledger: Fable tokens are the scarce
+resource, and detail loss at task->plan translation is exactly
+what the ledger exists to catch.
 
 Configuration (all optional):
-    LEGACY hard override, applied to every profile:
-        LEDGER_GUARD_THRESHOLD
-    Per-profile defaults (used when the hard override is unset):
-        LEDGER_GUARD_THRESHOLD_FABLE   default 1500
-        LEDGER_GUARD_THRESHOLD_OPUS    default 4000
-    FABLE_ORCH_METRICS=0 disables the local metrics log.
+    LEDGER_GUARD_THRESHOLD   gate in chars (default 1500;
+                             unparseable values fall back to it)
+    FABLE_ORCH_METRICS=0     disables the local metrics log
 """
 import json
 import os
 import sys
-import tempfile
 import time
 
-
-def _int_env(name, default):
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return default
-
-
-def session_model_cache_path(session_id):
-    if not session_id:
-        return None
-    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
-    return os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+DEFAULT_THRESHOLD = 1500
 
 
 def _metric(event, session_id=None, **extra):
@@ -78,47 +53,14 @@ def _metric(event, session_id=None, **extra):
         pass
 
 
-def profile_from_model(model):
-    """'fable' / 'opus' from a model string, or None when absent."""
-    if not model:
-        return None
-    return "fable" if "fable" in str(model).lower() else "opus"
-
-
-def active_profile(data):
-    """Resolve the profile: env override > payload model > cache > lean."""
-    override = (os.environ.get("FABLE_ORCH_PROFILE") or "auto").strip().lower()
-    if override in ("fable", "opus"):
-        return override
-
-    prof = profile_from_model(data.get("model"))
-    if prof:
-        return prof
-
-    cache = session_model_cache_path(data.get("session_id"))
-    if cache and os.path.isfile(cache):
-        try:
-            with open(cache, encoding="utf-8") as f:
-                prof = (json.load(f).get("profile") or "").strip().lower()
-            if prof in ("fable", "opus"):
-                return prof
-        except Exception:
-            pass
-    return "opus"
-
-
-def threshold(data):
-    # Hard override wins for every profile (backward compatible); a value
-    # that doesn't parse falls through to the per-profile defaults.
+def threshold():
     raw = os.environ.get("LEDGER_GUARD_THRESHOLD")
     if raw is not None:
         try:
             return int(raw)
         except ValueError:
             pass
-    if active_profile(data) == "fable":
-        return _int_env("LEDGER_GUARD_THRESHOLD_FABLE", 1500)
-    return _int_env("LEDGER_GUARD_THRESHOLD_OPUS", 4000)
+    return DEFAULT_THRESHOLD
 
 
 def find_ledger(start_dir):
@@ -164,7 +106,7 @@ def main():
         text = tool_input.get("prompt") or ""
         what = "spawn prompt"
 
-    limit = threshold(data)
+    limit = threshold()
     if len(text) <= limit:
         return
 

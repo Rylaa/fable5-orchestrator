@@ -50,7 +50,7 @@ def main():
             day = "?"
         per_day[day][event] += 1
         if event == "inject":
-            profiles[rec.get("profile") or "?"] += 1
+            profiles[rec.get("profile") or rec.get("model") or "?"] += 1
         if event == "stop_block":
             ledgers[rec.get("ledger") or "?"] += 1
         if event == "cleanup":
@@ -76,7 +76,7 @@ def main():
         print(f"{name:26} {count}")
 
     if profiles:
-        print("\n== sessions by profile (inject events) ==")
+        print("\n== sessions by profile/model (inject events) ==")
         for name, count in profiles.most_common():
             print(f"{name:8} {count}")
 

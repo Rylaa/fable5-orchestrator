@@ -29,8 +29,8 @@ import tempfile
 import time
 
 # Temp-file sweep is 96h (not 48h): a session left open-but-idle for two
-# days would otherwise lose its cache/sidecar to another session's sweep
-# and silently fall back to the lean profile on wake. Files are tiny.
+# days would otherwise lose its marker/sidecar to another session's sweep
+# and with them the stop guard's ownership scoping. Files are tiny.
 SWEEP_AGE_SECONDS = 96 * 3600
 METRICS_MAX_BYTES = 5 * 1024 * 1024
 # Hard wall-clock budget for all tmux work at SessionEnd — wedged tmux

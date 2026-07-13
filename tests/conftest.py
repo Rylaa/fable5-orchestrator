@@ -12,10 +12,7 @@ SCRIPTS = REPO / "scripts"
 # Env vars that would leak the host's configuration into the tests.
 STRIP_ENV = [
     "LEDGER_GUARD_THRESHOLD",
-    "LEDGER_GUARD_THRESHOLD_FABLE",
-    "LEDGER_GUARD_THRESHOLD_OPUS",
     "LEDGER_GUARD_STOP_MODE",
-    "FABLE_ORCH_PROFILE",
     "FABLE_ORCH_METRICS",
     "FABLE_ORCH_SWARM_CLEANUP",
     "FABLE_ORCH_SWARM_MAX_IDLE_H",

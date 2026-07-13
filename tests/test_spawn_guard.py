@@ -1,13 +1,11 @@
-import json
-
 from conftest import run_hook, write_ledger
 
 SCRIPT = "ledger_guard_spawn.py"
-LONG = "x" * 2000       # above the fable gate (1500), below the opus gate (4000)
-VERY_LONG = "x" * 5000  # above both gates
+LONG = "x" * 2000       # above the default 1500 gate
+VERY_LONG = "x" * 5000
 
 
-def spawn_payload(repo, prompt=LONG, model="claude-fable-5", tool="Agent", **extra):
+def spawn_payload(repo, prompt=LONG, tool="Agent", **extra):
     tool_input = {"prompt": prompt}
     tool_input.update(extra.pop("tool_input", {}))
     payload = {
@@ -16,8 +14,6 @@ def spawn_payload(repo, prompt=LONG, model="claude-fable-5", tool="Agent", **ext
         "cwd": str(repo),
         "session_id": "test-session",
     }
-    if model is not None:
-        payload["model"] = model
     payload.update(extra)
     return payload
 
@@ -33,20 +29,8 @@ def test_short_prompt_passes(repo_dir):
     assert run_hook(SCRIPT, spawn_payload(repo_dir, prompt="find the config file")) is None
 
 
-def test_long_prompt_without_ledger_denied_on_fable(repo_dir):
+def test_long_prompt_without_ledger_denied(repo_dir):
     assert is_deny(run_hook(SCRIPT, spawn_payload(repo_dir)))
-
-
-def test_same_prompt_passes_on_opus_threshold(repo_dir):
-    assert run_hook(SCRIPT, spawn_payload(repo_dir, model="claude-opus-4-8")) is None
-
-
-def test_very_long_prompt_denied_on_opus(repo_dir):
-    assert is_deny(run_hook(SCRIPT, spawn_payload(repo_dir, prompt=VERY_LONG, model="claude-opus-4-8")))
-
-
-def test_1m_suffix_still_detected_as_fable(repo_dir):
-    assert is_deny(run_hook(SCRIPT, spawn_payload(repo_dir, model="claude-fable-5[1m]")))
 
 
 def test_ledger_present_passes(repo_dir):
@@ -74,47 +58,26 @@ def test_workflow_by_name_passes(repo_dir):
     assert run_hook(SCRIPT, payload) is None
 
 
-def test_env_profile_override_beats_payload_model(repo_dir):
-    result = run_hook(
-        SCRIPT,
-        spawn_payload(repo_dir, model="claude-opus-4-8"),
-        env_extra={"FABLE_ORCH_PROFILE": "fable"},
-    )
-    assert is_deny(result)
-
-
-def test_malformed_hard_threshold_falls_through_to_profile(repo_dir):
-    # "abc" must not pin the strict 1500 gate on the lean profile —
-    # LONG (2000) stays under the opus gate (4000) and passes.
+def test_threshold_env_raises_gate(repo_dir):
     assert run_hook(
-        SCRIPT,
-        spawn_payload(repo_dir, model="claude-opus-4-8"),
-        env_extra={"LEDGER_GUARD_THRESHOLD": "abc"},
+        SCRIPT, spawn_payload(repo_dir),
+        env_extra={"LEDGER_GUARD_THRESHOLD": "3000"},
     ) is None
 
 
-def test_per_profile_threshold_env_overrides(repo_dir):
-    # Raise the fable gate above LONG -> passes on fable.
-    assert run_hook(
-        SCRIPT,
-        spawn_payload(repo_dir),
-        env_extra={"LEDGER_GUARD_THRESHOLD_FABLE": "3000"},
-    ) is None
-    # Lower the opus gate below LONG -> denied on the lean profile.
+def test_threshold_env_lowers_gate(repo_dir):
     assert is_deny(run_hook(
-        SCRIPT,
-        spawn_payload(repo_dir, model="claude-opus-4-8"),
-        env_extra={"LEDGER_GUARD_THRESHOLD_OPUS": "1000"},
+        SCRIPT, spawn_payload(repo_dir, prompt="z" * 200),
+        env_extra={"LEDGER_GUARD_THRESHOLD": "100"},
     ))
 
 
-def test_hard_threshold_override(repo_dir):
-    result = run_hook(
-        SCRIPT,
-        spawn_payload(repo_dir, prompt="z" * 200, model="claude-opus-4-8"),
-        env_extra={"LEDGER_GUARD_THRESHOLD": "100"},
-    )
-    assert is_deny(result)
+def test_malformed_threshold_falls_back_to_default(repo_dir):
+    # "abc" can't break the gate: the 1500 default applies and LONG is denied.
+    assert is_deny(run_hook(
+        SCRIPT, spawn_payload(repo_dir),
+        env_extra={"LEDGER_GUARD_THRESHOLD": "abc"},
+    ))
 
 
 def test_ledger_found_in_parent_directory(repo_dir):
@@ -149,24 +112,6 @@ def test_upward_search_stops_at_home(tmp_path):
     wd = home / "project"
     wd.mkdir(parents=True)
     assert is_deny(run_hook(SCRIPT, spawn_payload(wd), env_extra={"HOME": str(home)}))
-
-
-def test_cache_fallback_when_payload_has_no_model(repo_dir, tmp_path):
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    (cache_dir / "fable-orch-model-test-session.json").write_text(
-        json.dumps({"model": "claude-fable-5", "profile": "fable"}),
-        encoding="utf-8",
-    )
-    payload = spawn_payload(repo_dir, model=None)
-    assert is_deny(run_hook(SCRIPT, payload, tmpdir=cache_dir))
-
-
-def test_no_model_no_cache_defaults_to_lean(repo_dir, tmp_path):
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    payload = spawn_payload(repo_dir, model=None)
-    assert run_hook(SCRIPT, payload, tmpdir=empty) is None
 
 
 def test_malformed_input_never_blocks():

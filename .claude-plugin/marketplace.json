@@ -1,6 +1,6 @@
 {
   "name": "fable-orchestrator",
-  "description": "Model-aware multi-agent orchestration for Claude Code: auto-detects the session model and injects a Fable (token-frugal) or Opus (latency-lean) profile, with a Requirements Ledger and guard hooks that enforce the discipline mechanically.",
+  "description": "Fable 5-first multi-agent orchestration for Claude Code: a token-frugal chair profile with tier routing (Sonnet 5 does the work), a Requirements Ledger, guard hooks that enforce the discipline, and automatic teammate reaping.",
   "owner": {
     "name": "Yusuf Demirkoparan",
     "url": "https://github.com/Rylaa"
@@ -9,7 +9,7 @@
     {
       "name": "orchestrator",
       "source": "./",
-      "description": "Model-aware multi-agent orchestration: a Fable token-frugal profile and an Opus latency-lean profile, auto-selected from the session model, plus a Requirements Ledger and guard hooks that enforce the discipline mechanically."
+      "description": "Fable 5-first multi-agent orchestration: a token-frugal chair profile with tier routing, a Requirements Ledger, guard hooks that enforce the discipline mechanically, and automatic teammate reaping."
     }
   ]
 }

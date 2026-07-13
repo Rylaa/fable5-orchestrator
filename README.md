@@ -61,25 +61,22 @@ Fable thinks. Sonnet does. Fable checks the close. Your limit pays for the think
 
 Three layers, all mechanical — no CLAUDE.md editing, no manual routing.
 
-### 1 · Model-aware profiles
+### 1 · The Fable profile
 
-A SessionStart hook detects the chair model and injects the profile that fits it:
+A SessionStart hook injects the Fable-in-chair profile ([`instructions/dynamic-workflow-fable.md`](instructions/dynamic-workflow-fable.md)) into every session — the plugin is built for one chair, Claude Fable 5, and there is no mode to configure:
 
 ```
-┌──────────────────────────┬──────────────────────────────┬──────────────────────────────┐
-│                          │ FABLE profile                │ OPUS / lean profile          │
-├──────────────────────────┼──────────────────────────────┼──────────────────────────────┤
-│ Injected when chair is   │ Fable 5                      │ any other model              │
-│ Scarce resource          │ your usage limit             │ wall-clock latency           │
-│ Bounded / medium work    │ delegated                    │ done inline by the chair     │
-│ Requirements Ledger      │ file, before any delegation  │ proportional to size & risk  │
-│ Verification             │ fresh-eyes on every close    │ risk-gated                   │
-│ Disk hand-off            │ the default                  │ only for genuinely bulky     │
-│ Spawn-guard threshold    │ 1500 chars                   │ 4000 chars                   │
-└──────────────────────────┴──────────────────────────────┴──────────────────────────────┘
+┌──────────────────────────┬──────────────────────────────┐
+│ Scarce resource          │ your usage limit             │
+│ Bounded / medium work    │ delegated                    │
+│ Requirements Ledger      │ file, before any delegation  │
+│ Verification             │ fresh-eyes on every close    │
+│ Disk hand-off            │ the default                  │
+│ Spawn-guard threshold    │ 1500 chars                   │
+└──────────────────────────┴──────────────────────────────┘
 ```
 
-Both profiles route subagents by tier name (`sonnet`, `opus`, `fable`), keep bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and set effort per spawn: `max` for implementation, judgment, and verification; `low` for mechanical gathering. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
+The profile routes subagents by tier name (`sonnet`, `opus`, `fable`), keeps bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and sets effort per spawn: `max` for implementation, judgment, and verification; `low` for mechanical gathering. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
 
 ### 2 · A Requirements Ledger
 
@@ -101,7 +98,7 @@ Instructions are *advice*; hooks are *mechanism*. The two rules that get skipped
 ```
 spawn (Agent / Task / Workflow)
   │
-  ├─ text ≤ profile threshold ..................... PASS  (short spawns are never taxed)
+  ├─ text ≤ threshold (default 1500) .............. PASS  (short spawns are never taxed)
   │
   └─ text > threshold
        │
@@ -176,8 +173,8 @@ Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to
 }
 ```
 
-3. Append `instructions/dynamic-workflow-fable.md` (Fable chair) or `instructions/dynamic-workflow-opus.md` (any other chair) to `~/.claude/CLAUDE.md`.
-4. Without the SessionStart injector there is no per-session cache, so the spawn guard sits at the lean gate (4000). If Fable is your daily driver, pin `LEDGER_GUARD_THRESHOLD=1500` or `FABLE_ORCH_PROFILE=fable`.
+3. Append `instructions/dynamic-workflow-fable.md` to `~/.claude/CLAUDE.md`.
+4. Without the SessionStart injector there is no per-session `started` marker, so the stop guard can't tell another session's ledger from yours — every open ledger costs one reminder per session instead of zero.
 
 > Don't run the plugin AND the manual install side by side — you'd get every guard twice.
 
@@ -189,10 +186,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 ┌───────────────────────────────┬────────────────────┬────────────────────────────────────────────┐
 │ Env var                       │ Default            │ Meaning                                    │
 ├───────────────────────────────┼────────────────────┼────────────────────────────────────────────┤
-│ FABLE_ORCH_PROFILE            │ auto               │ auto | fable | opus — force a profile     │
-│ LEDGER_GUARD_THRESHOLD        │ (unset)            │ hard spawn threshold, every profile       │
-│ LEDGER_GUARD_THRESHOLD_FABLE  │ 1500               │ spawn gate under the Fable profile        │
-│ LEDGER_GUARD_THRESHOLD_OPUS   │ 4000               │ spawn gate under the lean profile         │
+│ LEDGER_GUARD_THRESHOLD        │ 1500               │ spawn-guard gate (chars)                  │
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking     │
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging          │
 │ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping           │
@@ -201,7 +195,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
-**Model detection.** Claude Code delivers the session model only in the SessionStart payload (optional even there — no other hook event receives it). The injector caches `{model, profile}` per session; the spawn guard resolves `FABLE_ORCH_PROFILE` → payload model (future-proofing) → session cache → lean default. Unknown model means lean profile — the heavy Fable discipline never runs silently on the wrong chair. The SessionEnd hook removes the session's temp files and sweeps any older than 96 hours.
+**The session marker.** The SessionStart injector writes a per-session temp file whose immutable `started` timestamp survives resume/clear/compact re-injections — the stop guard compares ledger mtimes against it to decide ownership, and the SessionEnd reaper anchors its cleanup to it. The SessionEnd hook removes the session's temp files and sweeps any older than 96 hours.
 
 **Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per profile, spawn denies/passes, stop blocks and suppressions. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
 
@@ -211,14 +205,14 @@ Set these in `~/.claude/settings.json` under `"env"`.
 python3 -m pytest tests/ -q
 ```
 
-The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — thresholds per model, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH).
+The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — the spawn threshold and its env override, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH).
 
 ## Honest limitations
 
 - Hooks check ledger **existence and checkbox state**, not fidelity — a shallow ledger passes; writing a faithful one stays a judgment task.
 - Existence, not freshness: a fully closed ledger from an old task satisfies the gate for a new one.
 - Marking `- [x]` without actually verifying is possible; mechanizing further would invite ritual compliance.
-- Detection keys on the model string — anything containing `fable` gets the Fable profile; force with `FABLE_ORCH_PROFILE` otherwise.
+- The plugin assumes a Fable 5 chair — the same profile is injected regardless of the session model, and the 1500-char spawn gate applies everywhere.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
 - Pane idleness is a CPU heuristic: a teammate silently blocked for hours inside one external command (a long build) looks idle and can be reaped — raise or disable `FABLE_ORCH_TEAMMATE_IDLE_H` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
 - The orchestration discipline itself is prompt-level; the hooks fence exactly two failure points — the two that get skipped the most.
