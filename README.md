@@ -21,7 +21,7 @@ This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends t
            ┌─────────────────────────────┼─────────────────────────────┐
            ▼                             ▼                             ▼
 ┌─────────────────────┐       ┌─────────────────────┐       ┌─────────────────────┐
-│   SONNET 5 · low    │       │   SONNET 5 · max    │       │   SONNET 5 · max    │
+│   SONNET 5 · max    │       │   SONNET 5 · max    │       │   SONNET 5 · max    │
 │   mechanical bulk   │       │   implementation    │       │   routine judgment  │
 │   grep·fetch·scan   │       │   code · tests      │       │   briefs · review   │
 │   format · read     │       │   debug · refactor  │       │   filtering         │
@@ -45,7 +45,7 @@ Fable thinks. Sonnet does. Fable checks the close. Your limit pays for the think
 │ Phase planning, arbitration, decisions  │ Fable 5 (chair) │ yes                 │
 │ Implementation, tests, refactors        │ Sonnet 5 max    │ nothing             │
 │ Source briefs, filtering, code review   │ Sonnet 5 max    │ nothing             │
-│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 low    │ nothing             │
+│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5 max    │ nothing             │
 │ Fresh-eyes verification (the close)     │ Fable 5 max     │ one call per close  │
 │ Escalations (hard judgment, security)   │ Opus → Fable    │ mostly nothing      │
 └─────────────────────────────────────────┴─────────────────┴─────────────────────┘
@@ -77,7 +77,7 @@ A SessionStart hook injects the Fable-in-chair profile ([`instructions/dynamic-w
 └──────────────────────────┴──────────────────────────────┘
 ```
 
-The profile routes subagents by tier name (`sonnet`, `opus`, `fable`), keeps bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and sets effort per spawn: `max` for implementation, judgment, and verification; `low` for mechanical gathering. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
+The profile routes subagents by tier name (`sonnet`, `opus`, `fable`), keeps bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and runs every delegated agent at `max` effort — savings come from the tier, never from dialing effort down. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
 
 ### 2 · A Requirements Ledger
 

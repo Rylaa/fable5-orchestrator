@@ -15,14 +15,12 @@ limit. Subagents may be used liberally.
 
 Pick subagent models by TIER NAME — `sonnet`, `opus`, `fable` —
 never by dated ID (today: Sonnet 5, Opus 4.8, Fable 5; the haiku
-tier is retired — use sonnet). Effort (agent frontmatter `effort:`,
-Workflow `agent()` option) goes where reasoning happens:
-
-- implementation & judgment (sonnet) → `max`, always
-- fresh-eyes verification (fable) → `max`, always
-- escalation (opus, → fable ceiling) → `max`, always
-- mechanical gathering (fetch/grep/format — no decisions) → `low`;
-  these tasks don't reason, extra effort is pure latency
+tier is retired — use sonnet). Effort is NOT a savings knob: EVERY
+delegated agent — implementation, judgment, verification,
+escalation, and mechanical gathering alike — runs at `max`, always.
+Set it explicitly on each spawn (agent frontmatter `effort:`,
+Workflow `agent()` option). Savings come from the model TIER
+(sonnet carries the volume), never from dialing effort down.
 
 ## Rule 0 — Orchestration threshold
 
@@ -91,10 +89,10 @@ orchestration (ultracode / an explicit ask).
 
 ## Model routing (by tier)
 
-**sonnet** — the universal worker. At `low`: grep/scan, structure
-listing, fetching (fetch ONLY — a fetch worker never decides what is
-relevant), formatting, mechanical edits. At `max`: code from a clear
-spec, tests, routine debugging, faithful source reading, structured
+**sonnet** (`max`) — the universal worker: grep/scan, structure
+listing, fetching (fetch ONLY — a fetch worker never decides what
+is relevant), formatting, mechanical edits; code from a clear spec,
+tests, routine debugging, faithful source reading, structured
 briefs, relevance filtering, standard review, synthesis drafts.
 Sonnet carries the judgment VOLUME — that is what preserves the
 limit.
@@ -135,7 +133,7 @@ is disguised solo work — phases go to sonnet workers with specs.
 1. YOU define the questions + sources (judgment — never a fetch
    worker's), write the ledger, spawn the whole fetch wave in ONE
    message.
-2. sonnet `low`, one per source: fetch, write the raw source
+2. sonnet `max`, one per source: fetch, write the raw source
    verbatim to ./.workflow/scratch/, return only the path.
 3. sonnet `max`, one per source: read it from disk → structured
    brief (claims, evidence, exact quotes, confidence, contradictions
