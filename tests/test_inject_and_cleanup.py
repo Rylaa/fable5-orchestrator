@@ -7,7 +7,17 @@ CLEANUP = "cleanup_session_cache.py"
 
 
 def context_of(result):
+    assert result["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     return result["hookSpecificOutput"]["additionalContext"]
+
+
+def test_profile_fits_the_injection_cap():
+    # Claude Code caps hook output at 10,000 chars; anything over is
+    # dumped to a file and the model sees only a 2KB preview — the
+    # profile silently stops reaching the chair (this happened: v0.8.0
+    # shipped at 10,069 chars). Keep a safety margin for the JSON wrapper.
+    text = (REPO / "instructions" / "dynamic-workflow-fable.md").read_text(encoding="utf-8")
+    assert len(text) < 9000, f"profile is {len(text)} chars — over the 9k safety margin"
 
 
 def test_injects_the_fable_profile(tmp_path):
@@ -137,6 +147,8 @@ def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
     cache.write_text("{}", encoding="utf-8")
     sidecar = tmp_path / "fable-orch-stop-s-clean.json"
     sidecar.write_text("{}", encoding="utf-8")
+    tasks = tmp_path / "fable-orch-tasks-s-clean.json"
+    tasks.write_text('{"count": 2}', encoding="utf-8")
     stale = tmp_path / "fable-orch-model-dead-session.json"
     stale.write_text("{}", encoding="utf-8")
     old = time.time() - 120 * 3600  # past the 96h sweep window
@@ -147,6 +159,7 @@ def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
     assert run_hook(CLEANUP, {"session_id": "s-clean"}, tmpdir=tmp_path) is None
     assert not cache.exists()
     assert not sidecar.exists()
+    assert not tasks.exists()  # the task-gate counter dies with the session
     assert not stale.exists()  # older than the 96h sweep window
     assert fresh.exists()      # other live sessions' files stay
 
@@ -158,6 +171,9 @@ sock = args[1] if len(args) > 1 and args[0] == "-S" else ""
 cmd = args[2] if len(args) > 2 else ""
 if os.environ.get("FAKE_TMUX_DEAD") == "1":
     sys.stderr.write("no server running\\n")
+    sys.exit(1)
+if os.environ.get("FAKE_TMUX_MISMATCH") == "1":
+    sys.stderr.write("protocol version mismatch (client 3.4, server 3.3)\\n")
     sys.exit(1)
 if cmd == "list-panes":
     print(os.environ.get("FAKE_PANES", "%1 12345"))
@@ -173,13 +189,21 @@ sys.exit(0)
 """
 
 FAKE_PS = """#!/usr/bin/env python3
-import os, sys
+import json, os, sys
 log = os.environ.get("FAKE_PS_LOG")
 if log:
     with open(log, "a") as f:
         f.write(" ".join(sys.argv[1:]) + "\\n")
-if "ppid=" in sys.argv:
-    print(os.environ.get("FAKE_PPID", "1"))   # ancestor walk
+if "ppid=,command=" in sys.argv:
+    # nearest-claude ancestor walk: "<ppid> <command of queried pid>"
+    anc = os.environ.get("FAKE_ANCESTRY")
+    if anc:
+        m = json.loads(anc)
+        print(m.get(sys.argv[-1], m.get("default", "1 init")))
+    else:
+        print(os.environ.get("FAKE_PPID", "1") + " claude")
+elif "ppid=" in sys.argv:
+    print(os.environ.get("FAKE_PPID", "1"))   # legacy ancestor walk
 elif any("cputime" in a for a in sys.argv):
     print(os.environ.get("FAKE_PS_PANE",       # pane idle sampling
           "12345 0:05.00 claude --agent-id w@session-t --agent-name w"))
@@ -319,3 +343,49 @@ def test_cleanup_without_session_id_is_noop(tmp_path):
 
 def test_cleanup_malformed_input_is_noop():
     assert run_hook(CLEANUP, raw="not json") is None
+
+
+def test_non_object_stdin_never_crashes(tmp_path):
+    # Valid JSON that isn't an object: both hooks stay on the contract.
+    assert run_hook(CLEANUP, raw="[1, 2]", tmpdir=tmp_path) is None
+    result = run_hook(INJECT, raw="[1, 2]",
+                      env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
+                      tmpdir=tmp_path)
+    assert "(FABLE profile)" in context_of(result)  # still injects
+
+
+def test_nested_claude_does_not_kill_outer_swarm(tmp_path):
+    # A nested `claude -p` (fusion helpers, scripts) ends: its hook's
+    # ancestor chain CONTAINS the outer session's claude. Matching every
+    # ancestor used to kill the outer session's LIVE team — only the
+    # NEAREST claude ancestor (pid 900, the inner session) may match.
+    import time
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    sock_dir = tmp_path / "tmuxroot" / f"tmux-{__import__('os').getuid()}"
+    (sock_dir / "claude-swarm-900").write_text("", encoding="utf-8")  # inner's team
+    (sock_dir / "claude-swarm-500").write_text("", encoding="utf-8")  # OUTER's team
+    env["FAKE_ANCESTRY"] = json.dumps({
+        "default": "900 python3 hook.py",   # hook's parent is the inner claude
+        "900": "800 claude -p run this",    # inner claude — NEAREST match
+        "800": "500 -bash",                 # shell between the two sessions
+        "500": "1 claude",                  # outer interactive claude
+    })
+    env["FAKE_PS_OUTPUT"] = "claude --agent-id w@session-otherteam --agent-name w"
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))
+    assert run_hook(CLEANUP, {"session_id": "s-nested"}, env_extra=env, tmpdir=tmp_path) is None
+    text = kill_log.read_text(encoding="utf-8") if kill_log.exists() else ""
+    assert "claude-swarm-900" in text      # the inner session's own team dies
+    assert "claude-swarm-500" not in text  # the outer session's team LIVES
+
+
+def test_protocol_mismatch_socket_survives(tmp_path):
+    # tmux binary upgraded mid-flight: the server answers rc=1 with
+    # "protocol version mismatch" but is ALIVE — unlinking its socket
+    # would orphan it forever. Only truly dead sockets get removed.
+    env, kill_log = _swarm_fixture(tmp_path)
+    env["FAKE_TMUX_MISMATCH"] = "1"
+    sock = tmp_path / "tmuxroot" / f"tmux-{__import__('os').getuid()}" / "claude-swarm-111"
+    assert run_hook(CLEANUP, {"session_id": "s-mismatch"}, env_extra=env, tmpdir=tmp_path) is None
+    assert sock.exists()
+    assert not kill_log.exists()

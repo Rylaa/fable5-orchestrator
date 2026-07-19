@@ -113,35 +113,38 @@ def owned_by_session(ledger, session_id):
             start = None
         if start is None:
             start = os.path.getmtime(cache)
+        # A future `started` (clock jump, corrupt value) must not silence
+        # the guard for the whole session — clamp to now.
+        start = min(start, time.time())
         return os.path.getmtime(ledger) >= start - 5.0
     except OSError:
         return True
+
+
+def _read_blocked(path):
+    """The sidecar's blocked map — {} for missing/corrupt/wrong-typed."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            blocked = json.load(f).get("blocked")
+        return blocked if isinstance(blocked, dict) else {}
+    except Exception:
+        return {}
 
 
 def already_reminded(session_id, ledger):
     path = stop_sidecar_path(session_id)
     if not path or not os.path.isfile(path):
         return False
-    try:
-        with open(path, encoding="utf-8") as f:
-            return ledger in (json.load(f).get("blocked") or {})
-    except Exception:
-        return False
+    return ledger in _read_blocked(path)
 
 
 def record_reminder(session_id, ledger):
     path = stop_sidecar_path(session_id)
     if not path:
         return
-    blocked = {}
+    blocked = _read_blocked(path)
     try:
-        if os.path.isfile(path):
-            with open(path, encoding="utf-8") as f:
-                blocked = json.load(f).get("blocked") or {}
-    except Exception:
-        blocked = {}
-    blocked[ledger] = round(time.time(), 3)
-    try:
+        blocked[ledger] = round(time.time(), 3)
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"blocked": blocked}, f)
     except Exception:
@@ -226,12 +229,17 @@ def reap_idle_teammates(session_id):
     except Exception:
         panes = {}
 
+    # The budget is checked before EVERY subprocess call, not just per
+    # socket: a wedged tmux answers at the 5s timeout each, and one
+    # iteration makes up to 3 calls — unchecked, a 4s budget stretches
+    # past the 10s hook timeout and the harness SIGKILLs the hook.
     deadline = now + TEAMMATE_SWEEP_BUDGET
     seen = set()
     killed = 0
+    expired = False
     for sock in _swarm_sockets():
-        if time.time() > deadline:
-            seen.update(panes)  # out of budget: keep unvisited samples
+        if expired or time.time() > deadline:
+            expired = True
             break
         try:
             r = _tmux(sock, "list-panes", "-a", "-F", "#{pane_id} #{pane_pid}")
@@ -244,6 +252,9 @@ def reap_idle_teammates(session_id):
                     pane_ids[bits[1]] = bits[0]
             if not pane_ids:
                 continue
+            if time.time() > deadline:
+                expired = True
+                break
             ps = subprocess.run(
                 ["ps", "-o", "pid=,cputime=,command=", "-p", ",".join(pane_ids)],
                 capture_output=True, text=True, timeout=5,
@@ -255,21 +266,35 @@ def reap_idle_teammates(session_id):
                 pid, cpu_text, command = bits
                 if pid not in pane_ids or "--agent-id" not in command:
                     continue  # not a teammate pane — never touch it
+                exe = os.path.basename(command.split()[0]) if command.split() else ""
+                if not exe.startswith("claude"):
+                    # Wrapper-shell root (`sh -c '... && claude ...'`): the
+                    # child burns the CPU while the shell's clock stays
+                    # frozen — judging idleness by it kills live workers.
+                    continue
                 cpu = _cpu_seconds(cpu_text)
                 if cpu is None:
                     continue
-                seen.add(pid)
-                prev = panes.get(pid)
+                # Key by socket+pane+pid: a bare pid key survives pid reuse
+                # and can hand a NEW busy pane a stale idle baseline.
+                key = f"{os.path.basename(sock)}:{pane_ids[pid]}:{pid}"
+                seen.add(key)
+                prev = panes.get(key)
                 if not prev or cpu != prev.get("cpu"):
-                    panes[pid] = {"cpu": cpu, "since": round(now, 3)}
+                    panes[key] = {"cpu": cpu, "since": round(now, 3)}
                     continue  # active, or first sighting: (re)baseline
                 if now - float(prev.get("since") or now) >= idle_h * 3600:
+                    if time.time() > deadline:
+                        expired = True
+                        break
                     _tmux(sock, "kill-pane", "-t", pane_ids[pid])
-                    panes.pop(pid, None)
-                    seen.discard(pid)
+                    panes.pop(key, None)
+                    seen.discard(key)
                     killed += 1
         except Exception:
             continue
+    if expired:
+        seen.update(panes)  # out of budget: keep unvisited samples
 
     panes = {p: v for p, v in panes.items() if p in seen}
     try:
@@ -287,17 +312,50 @@ def main():
         data = json.load(sys.stdin)
     except Exception:
         data = None
+    if not isinstance(data, dict):
+        data = None
     try:
         if data is not None:
             run_guard(data)
+    except Exception:
+        pass  # the guard fails open; it never crashes the hook pipeline
     finally:
+        # The decision above sits in a block-buffered pipe. The pane sweep
+        # can outlive the hook timeout on a wedged tmux — flush FIRST so a
+        # SIGKILL mid-sweep can't swallow the session's one reminder.
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
         try:
             reap_idle_teammates((data or {}).get("session_id"))
         except Exception:
             pass  # cleanup is best-effort; the guard's decision already went out
 
 
+def _outside_fences(text):
+    """Drop fenced code blocks — a ``` example checklist is not an open item."""
+    kept, fenced = [], False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def run_guard(data):
+    # Keep the session marker warm: the 96h temp sweep must never eat a
+    # LIVE session's marker/sidecars just because SessionStart hasn't
+    # re-fired in days. Content (the immutable `started`) is untouched.
+    cache = session_model_cache_path(data.get("session_id"))
+    if cache and os.path.isfile(cache):
+        try:
+            os.utime(cache, None)
+        except OSError:
+            pass
+
     # Loop guard: we already blocked this stop once; let it through now.
     if data.get("stop_hook_active"):
         return
@@ -312,7 +370,8 @@ def run_guard(data):
     except Exception:
         return
 
-    open_items = re.findall(r"^\s*[-*] \[ \](?:\s.*)?$", text, flags=re.M)
+    open_items = re.findall(r"^\s*[-*] \[ \](?:\s.*)?$",
+                            _outside_fences(text), flags=re.M)
     if not open_items:
         return
 

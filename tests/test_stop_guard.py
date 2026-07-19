@@ -170,12 +170,15 @@ def _pane_env(tmp_path):
     return env, kill_log, home
 
 
-def _seed_pane_state(home, cpu=5.0, since_ago=7200, stale_marker=True):
+PANE_KEY = "claude-swarm-111:%1:12345"  # socket : pane id : pid
+
+
+def _seed_pane_state(home, cpu=5.0, since_ago=7200, stale_marker=True, key=PANE_KEY):
     d = home / ".claude" / "fable-orch"
     d.mkdir(parents=True, exist_ok=True)
     state = d / "swarm-state.json"
     state.write_text(json.dumps(
-        {"panes": {"12345": {"cpu": cpu, "since": time.time() - since_ago}}}),
+        {"panes": {key: {"cpu": cpu, "since": time.time() - since_ago}}}),
         encoding="utf-8")
     if stale_marker:
         old = time.time() - 3600  # let the 30-min rate limit allow a sweep
@@ -190,7 +193,9 @@ def test_idle_teammate_pane_reaped(repo_dir, tmp_path):
     _seed_pane_state(home)
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     assert kill_log.is_file()
-    assert "pane" in kill_log.read_text(encoding="utf-8")
+    log = kill_log.read_text(encoding="utf-8")
+    assert "pane" in log
+    assert "-t %1" in log  # kill must target the PANE id, not the pid
 
 
 def test_active_teammate_pane_survives(repo_dir, tmp_path):
@@ -199,7 +204,7 @@ def test_active_teammate_pane_survives(repo_dir, tmp_path):
     state = _seed_pane_state(home, cpu=4.0)
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     assert not kill_log.exists()
-    rebaselined = json.loads(state.read_text(encoding="utf-8"))["panes"]["12345"]
+    rebaselined = json.loads(state.read_text(encoding="utf-8"))["panes"][PANE_KEY]
     assert rebaselined["cpu"] == 5.0  # fresh sample, idle clock restarted
 
 
@@ -209,7 +214,7 @@ def test_first_sighting_never_reaped(repo_dir, tmp_path):
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     assert not kill_log.exists()
     state = home / ".claude" / "fable-orch" / "swarm-state.json"
-    assert json.loads(state.read_text(encoding="utf-8"))["panes"]["12345"]["cpu"] == 5.0
+    assert json.loads(state.read_text(encoding="utf-8"))["panes"][PANE_KEY]["cpu"] == 5.0
 
 
 def test_pane_sweep_rate_limited(repo_dir, tmp_path):
@@ -218,3 +223,112 @@ def test_pane_sweep_rate_limited(repo_dir, tmp_path):
     _seed_pane_state(home, stale_marker=False)
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     assert not kill_log.exists()
+
+
+def test_legacy_pid_keyed_state_never_kills(repo_dir, tmp_path):
+    # Pre-0.10 state was keyed by bare pid — with pid reuse that hands a
+    # NEW pane a stale idle baseline. Old keys must not match; the pane
+    # is a first sighting and survives.
+    env, kill_log, home = _pane_env(tmp_path)
+    _seed_pane_state(home, key="12345")
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+
+
+def test_wrapper_shell_pane_never_reaped(repo_dir, tmp_path):
+    # Pane root is `sh -c '... claude --agent-id ...'`: the shell's CPU
+    # clock is frozen while the child works — judging idleness by it
+    # would kill a LIVE worker. Non-claude roots are never touched.
+    env, kill_log, home = _pane_env(tmp_path)
+    env["FAKE_PS_PANE"] = "12345 0:00.01 sh -c cd /repo && claude --agent-id w@session-t"
+    _seed_pane_state(home, cpu=0.01)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert not kill_log.exists()
+
+
+def test_real_ps_cputime_parses():
+    # The fakes never exercise the REAL ps output shape; parse our own
+    # process's cputime with the actual binary on this OS (macOS + Linux).
+    import importlib.util
+    import subprocess
+    import sys
+    from conftest import SCRIPTS
+
+    spec = importlib.util.spec_from_file_location(
+        "ledger_guard_stop_real", SCRIPTS / "ledger_guard_stop.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    out = subprocess.run(["ps", "-o", "cputime=", "-p", str(os.getpid())],
+                         capture_output=True, text=True, timeout=10).stdout.strip()
+    assert out, "real ps returned nothing"
+    assert mod._cpu_seconds(out) is not None
+
+
+# --- hardening: corrupt sidecars, hostile stdin, ledger dialects ---
+
+def test_wrong_typed_stop_sidecar_recovers(repo_dir, tmp_path):
+    # {"blocked": [1]} used to TypeError past the decision print — the
+    # guard must still block, exit 0, and rewrite a proper dict.
+    write_ledger(repo_dir, "- [ ] 1. open\n")
+    sidecar = tmp_path / "fable-orch-stop-test-session.json"
+    sidecar.write_text(json.dumps({"blocked": [1]}), encoding="utf-8")
+    assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
+    assert isinstance(json.loads(sidecar.read_text())["blocked"], dict)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path) is None
+
+
+def test_non_object_stdin_never_crashes():
+    assert run_hook(SCRIPT, raw="[1, 2]") is None
+    assert run_hook(SCRIPT, raw="42") is None
+
+
+def test_fenced_checklist_is_not_an_open_item(repo_dir, tmp_path):
+    write_ledger(repo_dir,
+                 "- [x] 1. done\n```\n- [ ] example inside a code fence\n```\n")
+    assert run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path) is None
+
+
+def test_open_item_outside_fence_still_blocks(repo_dir, tmp_path):
+    write_ledger(repo_dir,
+                 "```\n- [ ] fenced example\n```\n- [ ] 1. real open item\n")
+    result = run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path)
+    assert blocks(result)
+    assert "1 open item(s)" in result["reason"]
+
+
+def test_crlf_ledger_blocks(repo_dir, tmp_path):
+    (repo_dir / ".workflow").mkdir(exist_ok=True)
+    (repo_dir / ".workflow" / "LEDGER.md").write_bytes(b"- [ ] 1. open\r\n")
+    assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
+
+
+def test_indented_checkbox_blocks(repo_dir, tmp_path):
+    write_ledger(repo_dir, "  - [ ] 1. nested open item\n")
+    assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
+
+
+def test_plus_bullet_is_out_of_dialect(repo_dir, tmp_path):
+    # Documented scope: '- [ ]' and '* [ ]' count; '+ [ ]' does not.
+    write_ledger(repo_dir, "+ [ ] 1. plus bullet\n")
+    assert run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path) is None
+
+
+def test_future_started_still_owns(repo_dir, tmp_path):
+    # A marker `started` in the future (clock jump) must clamp to now —
+    # not silently disown every ledger for the whole session.
+    write_ledger(repo_dir, "- [ ] 1. open\n")
+    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache.write_text(json.dumps({"started": time.time() + 3600}), encoding="utf-8")
+    assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
+
+
+def test_stop_touches_the_session_marker(repo_dir, tmp_path):
+    # Every Stop refreshes the marker's mtime so the 96h temp sweep can
+    # never eat a LIVE session's files; `started` content is untouched.
+    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache.write_text(json.dumps({"started": 123.0}), encoding="utf-8")
+    old = time.time() - 7200
+    os.utime(cache, (old, old))
+    assert run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path) is None
+    assert os.path.getmtime(cache) > time.time() - 300
+    assert json.loads(cache.read_text())["started"] == 123.0

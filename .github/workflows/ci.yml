@@ -4,11 +4,16 @@ on:
   push:
   pull_request:
 
+defaults:
+  run:
+    shell: bash  # explicit bash enables pipefail — `cmd | tail` can't mask a red exit
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]  # hooks shell out to ps/tmux; BSD vs procps differs
         python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4

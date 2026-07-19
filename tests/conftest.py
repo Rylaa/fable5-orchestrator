@@ -39,6 +39,10 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
         env["TMP"] = str(tmpdir)
     if env_extra:
         env.update(env_extra)
+    # Insurance: a test that turns the swarm cleanup ON without pointing
+    # tmux at a sandbox would sweep the developer's REAL tmux servers.
+    assert env.get("FABLE_ORCH_SWARM_CLEANUP") != "1" or "TMUX_TMPDIR" in env, \
+        "FABLE_ORCH_SWARM_CLEANUP=1 requires a sandboxed TMUX_TMPDIR"
     stdin = raw if raw is not None else json.dumps(payload or {})
     proc = subprocess.run(
         [sys.executable, str(SCRIPTS / script)],

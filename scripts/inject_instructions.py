@@ -50,6 +50,8 @@ def main():
         data = json.load(sys.stdin)
     except Exception:
         data = {}
+    if not isinstance(data, dict):
+        data = {}
 
     model = data.get("model")  # optional; informational only
     session_id = data.get("session_id")
@@ -85,12 +87,19 @@ def main():
                     started = os.path.getmtime(cache)
                 except OSError:
                     pass
-            with open(cache, "w", encoding="utf-8") as f:
+            # Atomic replace: a crash mid-write must never leave a
+            # truncated marker — the mtime fallback would then re-anchor
+            # `started` to "now" and disown the session's ledgers. The
+            # tmp name keeps the fable-orch-*.json shape so an orphan
+            # from a crash still matches the 96h sweep.
+            tmp = f"{cache}.{os.getpid()}.tmp.json"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(
                     {"model": model, "session_id": session_id,
                      "started": round(started, 3)},
                     f,
                 )
+            os.replace(tmp, cache)
     except Exception:
         pass
 

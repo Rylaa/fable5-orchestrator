@@ -105,20 +105,22 @@ spawn (Agent / Task / Workflow)
        │
        ├─ subagent_type == "fork" ................. PASS  (forks already see the ledger)
        │
-       ├─ .workflow/LEDGER.md found ............... PASS  (cite its items per agent)
-       │  (searched cwd → repo root)
+       ├─ ACTIVE .workflow/LEDGER.md found ........ PASS  (cite its items per agent)
+       │  (cwd → repo root / $HOME)
        │
-       └─ no ledger ............................... DENY  → "write the ledger first,
-                                                     or do the small task yourself"
+       └─ no ledger — or only a stale one ......... DENY  → "write the ledger first;
+                                                     small single-phase → do directly"
 ```
+
+A ledger is *stale* when every item is closed AND it was last touched before this session started — last week's finished ledger doesn't disarm the gates for a new task. Open items, or any touch during this session, keep it active.
 
 **Task guard** (`PreToolUse` on `TaskCreate`) — the solo path the spawn guard can't see. A session that never spawns agents never meets the spawn guard; it just quietly implements a six-phase plan solo on the most expensive model (measured in the wild). The tracker tasks it creates for itself are the tell:
 
 ```
 TaskCreate (tracker task)
   │
-  ├─ .workflow/LEDGER.md found ..................... PASS
-  ├─ fewer than 3 tasks this session ............... PASS  (small task lists are fine)
+  ├─ ACTIVE .workflow/LEDGER.md found .............. PASS
+  ├─ fewer than 3 ledgerless tasks this session .... PASS  (small task lists are fine)
   │
   └─ 3rd ledgerless task ........................... DENY once → "multi-phase work:
                                                      write the ledger, delegate the
@@ -151,7 +153,7 @@ A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its 
 /plugin install orchestrator@fable-orchestrator
 ```
 
-Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to `tmux` for teammate reaping, and Windows is not supported. Model auto-detection works out of the box.
+Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to `tmux` for teammate reaping, and Windows is not supported. No configuration needed.
 
 ### Manual install (without the plugin system)
 
@@ -188,7 +190,7 @@ Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to
 ```
 
 3. Append `instructions/dynamic-workflow-fable.md` to `~/.claude/CLAUDE.md`.
-4. Without the SessionStart injector there is no per-session `started` marker, so the stop guard can't tell another session's ledger from yours — every open ledger costs one reminder per session instead of zero.
+4. Without the SessionStart injector there is no per-session `started` marker, so the stop guard can't tell another session's ledger from yours (every open ledger costs one reminder per session instead of zero) and the spawn/task gates can't ignore stale fully-closed ledgers.
 
 > Don't run the plugin AND the manual install side by side — you'd get every guard twice.
 
@@ -200,19 +202,19 @@ Set these in `~/.claude/settings.json` under `"env"`.
 ┌───────────────────────────────┬────────────────────┬────────────────────────────────────────────┐
 │ Env var                       │ Default            │ Meaning                                    │
 ├───────────────────────────────┼────────────────────┼────────────────────────────────────────────┤
-│ LEDGER_GUARD_THRESHOLD        │ 1500               │ spawn-guard gate (chars)                  │
-│ LEDGER_GUARD_TASKS            │ 3                  │ 3rd ledgerless tracker task denied; 0 off │
-│ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking     │
-│ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging          │
-│ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping           │
-│ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables   │
-│ FABLE_ORCH_TEAMMATE_IDLE_H    │ 2                  │ kill teammate panes idle ≥ N hours; 0 off │
+│ LEDGER_GUARD_THRESHOLD        │ 1500               │ spawn-guard gate (chars)                   │
+│ LEDGER_GUARD_TASKS            │ 3                  │ 3rd ledgerless tracker task denied; 0 off  │
+│ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking      │
+│ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging           │
+│ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping            │
+│ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables    │
+│ FABLE_ORCH_TEAMMATE_IDLE_H    │ 2                  │ kill teammate panes idle ≥ N hours; 0 off  │
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
 **The session marker.** The SessionStart injector writes a per-session temp file whose immutable `started` timestamp survives resume/clear/compact re-injections — the stop guard compares ledger mtimes against it to decide ownership, and the SessionEnd reaper anchors its cleanup to it. The SessionEnd hook removes the session's temp files and sweeps any older than 96 hours.
 
-**Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per profile, spawn denies/passes, stop blocks and suppressions. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
+**Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per model, spawn/task denies and passes, stop blocks and suppressions, reaps. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
 
 ## Tests
 
@@ -225,7 +227,7 @@ The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as 
 ## Honest limitations
 
 - Hooks check ledger **existence and checkbox state**, not fidelity — a shallow ledger passes; writing a faithful one stays a judgment task.
-- Existence, not freshness: a fully closed ledger from an old task satisfies the gate for a new one.
+- Freshness is only half-checked: a fully-closed ledger from a previous session re-arms the gates, but a stale ledger with OPEN items still satisfies them (it looks like active work).
 - Marking `- [x]` without actually verifying is possible; mechanizing further would invite ritual compliance.
 - The plugin assumes a Fable 5 chair — the same profile is injected regardless of the session model, and the 1500-char spawn gate applies everywhere.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.

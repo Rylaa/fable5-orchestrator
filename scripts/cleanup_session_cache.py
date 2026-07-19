@@ -97,39 +97,61 @@ def _tmux(sock, *args):
     )
 
 
-def _ancestor_pids(max_hops=12):
-    """PIDs of this process's ancestors. The SessionEnd hook is a child of
-    the main session process, and the tmux backend names each swarm server
-    claude-swarm-<main pid> — so the ancestor chain identifies OUR server
-    regardless of how teammates are tagged."""
-    pids = []
-    pid = os.getpid()
+def _is_claude_command(command):
+    """True when an argv string IS the claude CLI — the native `claude`
+    binary or the npm cli under a claude-code path. Deliberately NOT a
+    bare substring test: hook command lines contain `.claude/plugins/...`
+    paths, which must never match."""
+    for tok in command.split():
+        base = os.path.basename(tok.strip("\"'"))
+        if base == "claude" or "claude-code" in tok:
+            return True
+    return False
+
+
+def _nearest_claude_ancestor(deadline, max_hops=12):
+    """PID of the CLOSEST ancestor that is the claude CLI, or None.
+
+    The tmux backend names our swarm server claude-swarm-<main pid>.
+    Matching only the NEAREST claude ancestor keeps a nested claude
+    session (a `claude -p` run from Bash — fusion helpers, scripts)
+    from claiming — and killing — the OUTER session's live team when
+    the inner one ends."""
+    self_pid = pid = os.getpid()
     for _ in range(max_hops):
+        if time.time() > deadline:
+            return None
         try:
             out = subprocess.run(
-                ["ps", "-o", "ppid=", "-p", str(pid)],
+                ["ps", "-o", "ppid=,command=", "-p", str(pid)],
                 capture_output=True, text=True, timeout=5,
             ).stdout.strip()
-            pid = int(out)
+            bits = (out.splitlines()[0] if out else "").split(None, 1)
+            ppid = int(bits[0])
         except Exception:
-            break
-        if pid <= 1:
-            break
-        pids.append(pid)
-    return pids
+            return None
+        command = bits[1] if len(bits) > 1 else ""
+        if pid != self_pid and _is_claude_command(command):
+            return pid
+        if ppid <= 1:
+            return None
+        pid = ppid
+    return None
 
 
 def reap_own_swarm(session_id, deadline):
     """Kill swarm servers hosting THIS session's teammates. Returns count.
 
     Two matchers, either suffices:
-      1. Socket name claude-swarm-<pid> where <pid> is one of this hook's
-         ancestor processes (the main session process) — version-proof.
+      1. Socket name claude-swarm-<pid> where <pid> is this hook's
+         NEAREST claude ancestor (the session's own main process — never
+         an outer session's) — version-proof.
       2. Pane command tag @session-<prefix of this session id> — how older
          Claude Code versions tagged teammates; current versions tag with
          a per-team id, so this alone is no longer enough.
     """
-    own_names = {f"claude-swarm-{p}" for p in _ancestor_pids()}
+    own = _nearest_claude_ancestor(deadline)
+    own_names = {f"claude-swarm-{own}"} if own else set()
     marker = f"@session-{str(session_id)[:8]}" if session_id else None
     killed = 0
     for sock in _swarm_sockets():
@@ -149,11 +171,15 @@ def reap_own_swarm(session_id, deadline):
             pids = ",".join(p for p in r.stdout.split() if p.isdigit())
             if not pids:
                 continue
+            if time.time() > deadline:
+                break
             ps = subprocess.run(
                 ["ps", "-o", "command=", "-p", pids],
                 capture_output=True, text=True, timeout=5,
             )
             if marker in (ps.stdout or ""):
+                if time.time() > deadline:
+                    break
                 _tmux(sock, "kill-server")
                 killed += 1
         except Exception:
@@ -171,10 +197,16 @@ def sweep_stale_swarms(max_idle_h, deadline):
         try:
             r = _tmux(sock, "list-windows", "-a", "-F", "#{window_activity}")
             if r.returncode != 0:
-                try:
-                    os.remove(sock)  # server already gone; socket is litter
-                except OSError:
-                    pass
+                # Only unlink when the server is REALLY gone. A tmux
+                # binary upgrade answers with "protocol version mismatch"
+                # (also rc != 0) while the server lives — unlinking then
+                # makes it a permanently unreachable orphan.
+                err = (r.stderr or "").lower()
+                if "no server running" in err or "error connecting" in err:
+                    try:
+                        os.remove(sock)  # server already gone; socket is litter
+                    except OSError:
+                        pass
                 continue
             if max_idle_h <= 0:
                 continue
@@ -191,6 +223,8 @@ def main():
     try:
         data = json.load(sys.stdin)
     except Exception:
+        data = {}
+    if not isinstance(data, dict):
         data = {}
 
     session_id = data.get("session_id")
