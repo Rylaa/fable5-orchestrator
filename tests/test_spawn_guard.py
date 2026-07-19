@@ -116,3 +116,69 @@ def test_upward_search_stops_at_home(tmp_path):
 
 def test_malformed_input_never_blocks():
     assert run_hook(SCRIPT, raw="this is not json") is None
+
+
+# --- TaskCreate gate: the solo path the spawn gates can't see ---
+
+def task_payload(repo, session="task-guard-session"):
+    payload = {
+        "tool_name": "TaskCreate",
+        "tool_input": {"subject": "Faz N", "description": "d", "activeForm": "a"},
+        "cwd": str(repo),
+    }
+    if session is not None:
+        payload["session_id"] = session
+    return payload
+
+
+def run_tasks(repo, tmp, n, session="task-guard-session", env_extra=None):
+    """n TaskCreate calls sharing one sidecar tempdir; returns the outputs."""
+    return [
+        run_hook(SCRIPT, task_payload(repo, session), env_extra=env_extra, tmpdir=tmp)
+        for _ in range(n)
+    ]
+
+
+def test_first_two_tasks_pass_third_denied_once(repo_dir, tmp_path):
+    results = run_tasks(repo_dir, tmp_path, 4)
+    assert results[0] is None and results[1] is None
+    assert is_deny(results[2])
+    reason = results[2]["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "task #3" in reason and "LEDGER.md" in reason
+    assert results[3] is None  # one reminder per session, then quiet
+
+
+def test_tasks_pass_freely_with_ledger(repo_dir, tmp_path):
+    write_ledger(repo_dir)
+    assert run_tasks(repo_dir, tmp_path, 5) == [None] * 5
+
+
+def test_ledger_written_after_deny_unblocks(repo_dir, tmp_path):
+    assert is_deny(run_tasks(repo_dir, tmp_path, 3)[2])
+    write_ledger(repo_dir)
+    assert run_tasks(repo_dir, tmp_path, 2) == [None, None]
+
+
+def test_task_limit_env_lowers_gate(repo_dir, tmp_path):
+    results = run_tasks(repo_dir, tmp_path, 1, env_extra={"LEDGER_GUARD_TASKS": "1"})
+    assert is_deny(results[0])
+
+
+def test_task_gate_disabled_by_zero(repo_dir, tmp_path):
+    results = run_tasks(repo_dir, tmp_path, 6, env_extra={"LEDGER_GUARD_TASKS": "0"})
+    assert results == [None] * 6
+
+
+def test_malformed_task_limit_falls_back_to_default(repo_dir, tmp_path):
+    results = run_tasks(repo_dir, tmp_path, 3, env_extra={"LEDGER_GUARD_TASKS": "many"})
+    assert results[:2] == [None, None] and is_deny(results[2])
+
+
+def test_task_counts_do_not_leak_across_sessions(repo_dir, tmp_path):
+    assert run_tasks(repo_dir, tmp_path, 2, session="session-a") == [None, None]
+    assert run_tasks(repo_dir, tmp_path, 2, session="session-b") == [None, None]
+
+
+def test_task_without_session_id_passes(repo_dir, tmp_path):
+    # No session_id -> nothing safe to scope the count to -> never block.
+    assert run_tasks(repo_dir, tmp_path, 4, session=None) == [None] * 4

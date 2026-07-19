@@ -73,6 +73,7 @@ A SessionStart hook injects the Fable-in-chair profile ([`instructions/dynamic-w
 │ Verification             │ fresh-eyes on every close    │
 │ Disk hand-off            │ the default                  │
 │ Spawn-guard threshold    │ 1500 chars                   │
+│ Task-list gate           │ 3rd task needs the ledger    │
 └──────────────────────────┴──────────────────────────────┘
 ```
 
@@ -91,7 +92,7 @@ Before serious delegation the chair writes every requirement, constraint, and ed
 
 ### 3 · Guard hooks
 
-Instructions are *advice*; hooks are *mechanism*. The two rules that get skipped under pressure are enforced:
+Instructions are *advice*; hooks are *mechanism*. The failure points that get skipped under pressure are fenced:
 
 **Spawn guard** (`PreToolUse` on `Agent|Task|Workflow`) — gates the spawn `prompt`, or the Workflow `script`:
 
@@ -109,6 +110,19 @@ spawn (Agent / Task / Workflow)
        │
        └─ no ledger ............................... DENY  → "write the ledger first,
                                                      or do the small task yourself"
+```
+
+**Task guard** (`PreToolUse` on `TaskCreate`) — the solo path the spawn guard can't see. A session that never spawns agents never meets the spawn guard; it just quietly implements a six-phase plan solo on the most expensive model (measured in the wild). The tracker tasks it creates for itself are the tell:
+
+```
+TaskCreate (tracker task)
+  │
+  ├─ .workflow/LEDGER.md found ..................... PASS
+  ├─ fewer than 3 tasks this session ............... PASS  (small task lists are fine)
+  │
+  └─ 3rd ledgerless task ........................... DENY once → "multi-phase work:
+                                                     write the ledger, delegate the
+                                                     phases to workers" — then quiet
 ```
 
 **Close guard** (`Stop`):
@@ -149,7 +163,7 @@ Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(Agent|Task|Workflow)$",
+        "matcher": "^(Agent|Task|Workflow|TaskCreate)$",
         "hooks": [
           { "type": "command", "command": "python3 ~/.claude/hooks/ledger_guard_spawn.py", "timeout": 10 }
         ]
@@ -187,6 +201,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ Env var                       │ Default            │ Meaning                                    │
 ├───────────────────────────────┼────────────────────┼────────────────────────────────────────────┤
 │ LEDGER_GUARD_THRESHOLD        │ 1500               │ spawn-guard gate (chars)                  │
+│ LEDGER_GUARD_TASKS            │ 3                  │ 3rd ledgerless tracker task denied; 0 off │
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking     │
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging          │
 │ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping           │
@@ -205,7 +220,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 python3 -m pytest tests/ -q
 ```
 
-The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — the spawn threshold and its env override, the fork exemption, Workflow script gating, the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH).
+The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — the spawn threshold and its env override, the fork exemption, Workflow script gating, the task-list gate (counting, one deny per session, session isolation), the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH).
 
 ## Honest limitations
 
@@ -215,11 +230,12 @@ The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as 
 - The plugin assumes a Fable 5 chair — the same profile is injected regardless of the session model, and the 1500-char spawn gate applies everywhere.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
 - Pane idleness is a CPU heuristic: a teammate silently blocked for hours inside one external command (a long build) looks idle and can be reaped — raise or disable `FABLE_ORCH_TEAMMATE_IDLE_H` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
-- The orchestration discipline itself is prompt-level; the hooks fence exactly two failure points — the two that get skipped the most.
+- The task guard counts tracker tasks, not work size: a solo multi-phase session that never creates tasks still slips through, and the deny is a single nudge per session, not a wall.
+- The orchestration discipline itself is prompt-level; the hooks fence exactly three failure points — the ones that get skipped the most.
 
-## Why these two guards
+## Why these guards
 
-Details die *entering* the workflow (task→plan translation, fenced by the spawn guard) and *leaving* it (closing with silently unaddressed items, fenced by the close guard). Everything between is judgment — and judgment belongs to the model, not to a regex.
+Details die *entering* the workflow (task→plan translation, fenced by the spawn guard) and *leaving* it (closing with silently unaddressed items, fenced by the close guard). The third measured failure is the workflow never starting at all: the chair quietly implementing a multi-phase plan solo on the most expensive model (fenced by the task guard). Everything between is judgment — and judgment belongs to the model, not to a regex.
 
 ## License
 

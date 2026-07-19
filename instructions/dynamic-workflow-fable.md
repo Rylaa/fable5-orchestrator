@@ -41,6 +41,16 @@ change is bounded and well understood — even if it touches several
 files. Subagent reports land in YOUR context too: for small tasks,
 ledger + briefs + verification cost more context than direct work.
 
+HARD CAP on "do it yourself": work that needs a multi-phase plan
+or a tracker task list of 3+ items is OVER the threshold — no
+matter how sequential or well-understood it looks. Sequential
+phases are not an excuse to stay solo: workers run the phases,
+you sequence them. An approved plan-mode plan is NOT an
+exemption — executing it still means ledger + sonnet workers.
+The chair writes code directly only for single-sitting, small
+diffs. (Enforced: the 3rd tracker task of a ledgerless session
+is denied once.)
+
 Exception: bounded follow-up work that leans on THIS conversation
 (apply the fix we discussed, extend the analysis above) → spawn a
 fork (see below) instead of re-explaining the context in a spec.
@@ -60,14 +70,18 @@ edge case in the user's request — one line each.
   HOOKS: a Stop hook holds the session's first close while any
   `- [ ]` remains (one reminder per session); a PreToolUse hook
   blocks detailed delegations (spawn prompt or Workflow script >
-  1500 chars) while the ledger file is missing.
+  1500 chars) while the ledger file is missing, and denies the
+  3rd tracker task of a ledgerless session (multi-phase work must
+  not run solo — see Rule 0's hard cap).
   Forks are exempt — they already see the ledger in context.
 - Every phase you spawn cites which ledger items it covers.
 - The workflow CANNOT close while any item is unaddressed.
 - New discoveries mid-workflow get appended to the ledger.
 - LATENCY: write the ledger and spawn the first wave of agents
   in ONE message (parallel tool calls) — never ledger → wait →
-  spawn.
+  spawn. After a plan-mode approval that first message comes
+  IMMEDIATELY: ledger + first worker wave, not solo
+  implementation of the plan's phases.
 - If ledger items conflict, or the request is ambiguous on a
   consequential point, ASK THE USER before building. Don't guess.
 

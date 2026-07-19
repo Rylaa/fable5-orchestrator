@@ -85,6 +85,12 @@ def main():
     if denies or passes:
         print(f"\nover-threshold spawns: {passes} passed with a ledger, {denies} denied")
 
+    tdenies = events.get("tasks_deny", 0)
+    tsupp = events.get("tasks_suppressed", 0)
+    if tdenies or tsupp:
+        print(f"\nsolo multi-phase nudges: {tdenies} denied, "
+              f"{tsupp} further ledgerless tasks after the reminder")
+
     if swarm_reaped:
         print(f"\ntmux teammate servers reaped: {swarm_reaped}")
     if panes_reaped:

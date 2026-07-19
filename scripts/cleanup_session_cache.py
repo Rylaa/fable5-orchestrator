@@ -4,7 +4,7 @@ and sweep stale leftovers.
 
 Three duties, all best-effort (never fails the session):
 
-  1. Delete this session's temp files (model cache + stop sidecar), then
+  1. Delete this session's temp files (model cache + guard sidecars), then
      sweep any fable-orch-*.json older than 96h — SessionEnd doesn't fire
      for crashed sessions, so the files would otherwise accumulate.
   2. Reap this session's tmux teammates. The experimental agent-teams
@@ -194,7 +194,7 @@ def main():
         data = {}
 
     session_id = data.get("session_id")
-    for prefix in ("fable-orch-model", "fable-orch-stop"):
+    for prefix in ("fable-orch-model", "fable-orch-stop", "fable-orch-tasks"):
         path = _tmp_json(prefix, session_id)
         if path and os.path.isfile(path):
             try:
