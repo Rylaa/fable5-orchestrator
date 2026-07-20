@@ -199,13 +199,38 @@ def test_idle_teammate_pane_reaped(repo_dir, tmp_path):
 
 
 def test_active_teammate_pane_survives(repo_dir, tmp_path):
-    # CPU moved since the last sample -> active worker; re-baseline, no kill.
+    # 1 cpu-sec over 60s (~1.7%) is above the parked rate -> active
+    # worker; re-baseline, no kill.
     env, kill_log, home = _pane_env(tmp_path)
-    state = _seed_pane_state(home, cpu=4.0)
+    state = _seed_pane_state(home, cpu=4.0, since_ago=60)
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     assert not kill_log.exists()
     rebaselined = json.loads(state.read_text(encoding="utf-8"))["panes"][PANE_KEY]
     assert rebaselined["cpu"] == 5.0  # fresh sample, idle clock restarted
+
+
+def test_heartbeat_pane_still_reaped(repo_dir, tmp_path):
+    # A PARKED teammate is not CPU-frozen — it polls its mailbox at
+    # ~0.4%. 0.3 cpu-sec over 2h is far under the 1% rate: reaped.
+    # (Equality-based idleness never fired on this, measured live.)
+    env, kill_log, home = _pane_env(tmp_path)
+    env["FAKE_PS_PANE"] = "12345 0:05.30 claude --agent-id w@session-t --agent-name w"
+    _seed_pane_state(home, cpu=5.0)
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    assert kill_log.is_file()
+    assert "-t %1" in kill_log.read_text(encoding="utf-8")
+
+
+def test_default_server_pane_reaped(repo_dir, tmp_path):
+    # Current Claude Code parks teammates in the USER'S default tmux
+    # server — the sweep must scan it, and must kill only the pane.
+    env, kill_log, home = _pane_env(tmp_path)
+    sock_dir = tmp_path / "tmuxroot" / f"tmux-{os.getuid()}"
+    (sock_dir / "default").write_text("", encoding="utf-8")
+    _seed_pane_state(home, key="default:%1:12345")
+    assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+    log = kill_log.read_text(encoding="utf-8") if kill_log.exists() else ""
+    assert "default -t %1" in log
 
 
 def test_first_sighting_never_reaped(repo_dir, tmp_path):

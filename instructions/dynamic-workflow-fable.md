@@ -7,9 +7,9 @@
 
 You (the session model) are the ORCHESTRATOR and FINAL ARBITER: plan,
 delegate, verify, decide. Your tokens are for orchestration and
-judgment, not for typing every token of work — each token of bulk
-work you delegate preserves both your context window and the user's
-limit. Subagents may be used liberally.
+judgment, not for typing every token of work — delegated bulk work
+preserves both your context window and the user's limit. Subagents
+may be used liberally.
 
 ## Tiers & effort
 
@@ -18,9 +18,12 @@ never by dated ID (today: Sonnet 5, Opus 4.8, Fable 5; the haiku
 tier is retired — use sonnet). Effort is NOT a savings knob: EVERY
 delegated agent — implementation, judgment, verification,
 escalation, and mechanical gathering alike — runs at `max`, always.
-Set it explicitly on each spawn (agent frontmatter `effort:`,
-Workflow `agent()` option). Savings come from the model TIER
-(sonnet carries the volume), never from dialing effort down.
+Set it explicitly on each spawn (`effort:` in agent frontmatter /
+Workflow `agent()`). Savings come from the model TIER (sonnet
+carries the volume), never from dialing effort down. This
+discipline is EFFORT-INDEPENDENT: whatever effort the chair
+session runs at, orchestration applies unchanged and workers stay
+pinned to `max` — no special mode is required.
 
 ## Rule 0 — Orchestration threshold
 
@@ -83,9 +86,9 @@ verdicts, and short verbatim snippets — never bulk content.
 
 Read-only agents may share the repo concurrently. Agents that EDIT
 in parallel each run with `isolation: "worktree"`. Spawn independent
-agents in a single message so they actually run concurrently; use
-the `Workflow` tool only when the user has opted into multi-agent
-orchestration (ultracode / an explicit ask).
+agents in a single message so they actually run concurrently — teams
+need no opt-in at any chair effort. Only the `Workflow` TOOL sits
+behind the harness's own gate (ultracode / an explicit user ask).
 
 ## Model routing (by tier)
 
@@ -115,18 +118,27 @@ have.
 
 Escalation is one-way: predictably hard → straight to opus (no
 ladder-climbing); sonnet "uncertain" → opus at `max`, never a retry
-on the same tier; beyond opus → fable. Steer depth with BOTH knobs:
-set effort per the policy above AND instruct deep, exhaustive
+on the same tier; beyond opus → fable. Instruct deep, exhaustive
 reasoning wherever a decision is made.
 
 ## Forks — spec-free, context-inheriting, capped
 
 `subagent_type: "fork"` clones your FULL conversation; its tool
 churn stays out of your window and only the final result returns.
-Use it for bounded, context-heavy follow-ups you would otherwise
-re-explain at length. A fork runs on YOUR model and spends the usage
+Use it for bounded, context-heavy follow-ups.
+A fork runs on YOUR model and spends the usage
 limit: at most 2 forks per session, and forking the phases of a plan
 is disguised solo work — phases go to sonnet workers with specs.
+
+## Teammate lifecycle — dismiss when done
+
+Named teammates park as tmux panes until dismissed. Once a
+teammate's final report is ACCEPTED with no follow-up planned,
+dismiss it: SendMessage `{"type": "shutdown_request"}` — never
+leave finished teammates stacked. Dismissal is final (no resume):
+dismiss only after processing the output. The plugin reaps what
+you forget: session close kills your team's panes; a
+sustained-low-CPU pane dies after ~1h.
 
 ## Research pipeline — parallel fan-out, no mid-flight dumps
 
@@ -143,9 +155,8 @@ is disguised solo work — phases go to sonnet workers with specs.
 5. YOU check the synthesis + verbatim evidence against the ledger →
    decide.
 
-With explicit multi-agent opt-in, steps 2–4 run as ONE `Workflow`
-pipeline instead — the intermediates never touch your context either
-way.
+With Workflow-tool opt-in, steps 2–4 run as one pipeline instead —
+intermediates never touch your context either way.
 
 ## Subagent output contract (enforced)
 

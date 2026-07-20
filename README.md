@@ -144,7 +144,7 @@ turn ends
        good; LEDGER_GUARD_STOP_MODE=every-turn restores per-turn blocking.
 ```
 
-A fourth hook (`SessionEnd`) cleans up after the session: its temp files, **its tmux teammates** — the experimental agent-teams backend parks teammates in `claude-swarm-*` tmux servers and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB across three old sessions); the hook kills the server named with the session's own process id (`claude-swarm-<pid>`, found via the hook's ancestor chain) or whose panes carry its `@session-<id>` tag — and any swarm server idle for 48h+, which catches teams orphaned by crashed sessions. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes whose clock hasn't moved for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 2) — pane-level, so working siblings are untouched.
+A fourth hook (`SessionEnd`) cleans up after the session: its temp files and **its tmux teammates**. The agent-teams backend parks teammates in tmux panes and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB; later, 9 panes parked for 11-30 hours) — on current Claude Code those panes sit inside **your own default tmux server**, on older versions in dedicated `claude-swarm-*` servers. The hook kills the session's own teammates wherever they live: the legacy `claude-swarm-<pid>` server whole (matched via the hook's nearest-claude ancestor or the `@session-<id>` pane tag), and on shared servers only the PANES carrying this session's `--parent-session-id` — a non-swarm server itself is never killed. Swarm servers idle 48h+ are swept too. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes idling below ~1% CPU for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 1). A parked teammate still burns a mailbox-polling heartbeat, so idleness is a sustained low RATE, not a frozen clock — working siblings re-baseline and survive. The injected profile adds the front line: the chair dismisses a teammate (`shutdown_request`) the moment its report is accepted.
 
 ## Install
 
@@ -208,7 +208,8 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging           │
 │ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping            │
 │ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables    │
-│ FABLE_ORCH_TEAMMATE_IDLE_H    │ 2                  │ kill teammate panes idle ≥ N hours; 0 off  │
+│ FABLE_ORCH_TEAMMATE_IDLE_H    │ 1                  │ kill teammate panes idle ≥ N hours; 0 off  │
+│ FABLE_ORCH_TEAMMATE_IDLE_RATE │ 0.01               │ cpu-sec/sec under which a pane is idle     │
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
@@ -231,7 +232,7 @@ The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as 
 - Marking `- [x]` without actually verifying is possible; mechanizing further would invite ritual compliance.
 - The plugin assumes a Fable 5 chair — the same profile is injected regardless of the session model, and the 1500-char spawn gate applies everywhere.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
-- Pane idleness is a CPU heuristic: a teammate silently blocked for hours inside one external command (a long build) looks idle and can be reaped — raise or disable `FABLE_ORCH_TEAMMATE_IDLE_H` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
+- Pane idleness is a CPU-rate heuristic: a teammate parked below ~1% CPU for the idle window is reaped, so one blocked for hours inside a single quiet external wait (a long remote build) can be killed mid-wait — raise `FABLE_ORCH_TEAMMATE_IDLE_H`, lower `FABLE_ORCH_TEAMMATE_IDLE_RATE`, or disable with `FABLE_ORCH_TEAMMATE_IDLE_H=0` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
 - The task guard counts tracker tasks, not work size: a solo multi-phase session that never creates tasks still slips through, and the deny is a single nudge per session, not a wall.
 - The orchestration discipline itself is prompt-level; the hooks fence exactly three failure points — the ones that get skipped the most.
 

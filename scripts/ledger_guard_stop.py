@@ -153,15 +153,36 @@ def record_reminder(session_id, ledger):
 
 TEAMMATE_SWEEP_INTERVAL = 1800  # at most one pane sweep per 30 minutes
 TEAMMATE_SWEEP_BUDGET = 4       # seconds of wall clock per sweep
+# A PARKED teammate is not CPU-silent: it polls its mailbox at roughly
+# 0.004 cpu-sec/sec, so "cputime unchanged" never fires on the current
+# backend. Idleness is a RATE: below this cpu-sec/wall-sec, the pane is
+# considered parked. Working agents (even mostly API-bound) run well
+# above it over an hour-long window.
+TEAMMATE_IDLE_RATE = 0.01
 
 
-def _swarm_sockets():
-    """claude-swarm-* sockets (tmux uses TMUX_TMPDIR or /tmp, NOT $TMPDIR)."""
+def _idle_rate():
+    raw = os.environ.get("FABLE_ORCH_TEAMMATE_IDLE_RATE")
+    if raw is not None:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return TEAMMATE_IDLE_RATE
+
+
+def _team_sockets():
+    """Every tmux socket that may host teammate panes (TMUX_TMPDIR or
+    /tmp, NOT $TMPDIR). Current Claude Code opens teammate panes inside
+    the USER'S default tmux server; older versions parked them in
+    dedicated claude-swarm-* servers — scan every socket and let the
+    pane filters (--agent-id + claude root command) protect everything
+    that isn't a teammate."""
     try:
         base = os.environ.get("TMUX_TMPDIR") or "/tmp"
         d = os.path.join(base, f"tmux-{os.getuid()}")
         return [os.path.join(d, n) for n in sorted(os.listdir(d))
-                if n.startswith("claude-swarm-")]
+                if not n.startswith(".")]
     except Exception:
         return []
 
@@ -194,24 +215,26 @@ def _cpu_seconds(text):
 
 
 def reap_idle_teammates(session_id):
-    """Kill teammate panes whose CPU clock hasn't moved for
-    FABLE_ORCH_TEAMMATE_IDLE_H hours (default 2; 0 disables).
+    """Kill teammate panes whose CPU RATE stayed under the parked
+    threshold for FABLE_ORCH_TEAMMATE_IDLE_H hours (default 1; 0
+    disables).
 
-    The agent-teams backend parks finished teammates in their tmux panes
-    for the whole life of the parent session. Server-level activity can't
-    see one idle pane among working siblings (all panes share a window),
-    so idleness is measured PER PANE: two CPU samples at least the
-    threshold apart with no movement. Active panes are never touched and
-    a first sighting is never killed. Rate-limited via the state file's
-    mtime. Killing the last pane ends the tmux session, so emptied
-    servers exit on their own.
+    The agent-teams backend parks finished teammates in their tmux
+    panes for the whole life of the parent session — on current Claude
+    Code those panes sit in the USER'S default tmux server. A parked
+    teammate still burns a mailbox-polling heartbeat, so idleness is a
+    sustained LOW RATE (see TEAMMATE_IDLE_RATE), measured PER PANE
+    against a baseline kept in the state file. A rate at or above the
+    threshold re-baselines; a first sighting is never killed. The sweep
+    is rate-limited via the state file's mtime. Killing the pane ends
+    the teammate process (it exits moments after its pane closes).
     """
     if (os.environ.get("FABLE_ORCH_SWARM_CLEANUP") or "").strip() == "0":
         return
     try:
-        idle_h = float(os.environ.get("FABLE_ORCH_TEAMMATE_IDLE_H") or 2)
+        idle_h = float(os.environ.get("FABLE_ORCH_TEAMMATE_IDLE_H") or 1)
     except ValueError:
-        idle_h = 2.0
+        idle_h = 1.0
     if idle_h <= 0:
         return
 
@@ -237,7 +260,7 @@ def reap_idle_teammates(session_id):
     seen = set()
     killed = 0
     expired = False
-    for sock in _swarm_sockets():
+    for sock in _team_sockets():
         if expired or time.time() > deadline:
             expired = True
             break
@@ -280,10 +303,19 @@ def reap_idle_teammates(session_id):
                 key = f"{os.path.basename(sock)}:{pane_ids[pid]}:{pid}"
                 seen.add(key)
                 prev = panes.get(key)
-                if not prev or cpu != prev.get("cpu"):
+                try:
+                    prev_cpu = float(prev.get("cpu"))
+                    since = float(prev.get("since"))
+                except (AttributeError, TypeError, ValueError):
+                    prev = None
+                if not prev:
                     panes[key] = {"cpu": cpu, "since": round(now, 3)}
-                    continue  # active, or first sighting: (re)baseline
-                if now - float(prev.get("since") or now) >= idle_h * 3600:
+                    continue  # first sighting: baseline only, never kill
+                elapsed = max(now - since, 1.0)
+                if (cpu - prev_cpu) / elapsed >= _idle_rate():
+                    panes[key] = {"cpu": cpu, "since": round(now, 3)}
+                    continue  # genuinely working: restart the idle clock
+                if elapsed >= idle_h * 3600:
                     if time.time() > deadline:
                         expired = True
                         break
@@ -291,6 +323,8 @@ def reap_idle_teammates(session_id):
                     panes.pop(key, None)
                     seen.discard(key)
                     killed += 1
+                # else: parked so far but under the window — keep the
+                # old baseline so the idle clock keeps accumulating
         except Exception:
             continue
     if expired:

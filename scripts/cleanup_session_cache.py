@@ -7,13 +7,13 @@ Three duties, all best-effort (never fails the session):
   1. Delete this session's temp files (model cache + guard sidecars), then
      sweep any fable-orch-*.json older than 96h — SessionEnd doesn't fire
      for crashed sessions, so the files would otherwise accumulate.
-  2. Reap this session's tmux teammates. The experimental agent-teams
-     tmux backend (CLAUDE_CODE_SPAWN_BACKEND=tmux) parks teammates in a
-     claude-swarm-* tmux server and does NOT reap them when the session
-     ends — measured in the wild: 63 orphaned agents holding ~5 GB RSS
-     across three old sessions. Teammate panes carry
-     `--agent-id <name>@session-<prefix>` on their command line; a
-     server whose panes match this session's prefix is killed.
+  2. Reap this session's tmux teammates. The agent-teams backend parks
+     teammates in tmux panes and does NOT reap them when the session
+     ends — measured in the wild: 63 orphaned agents holding ~5 GB RSS.
+     Current Claude Code opens the panes inside the USER'S default tmux
+     server (killed PANE by pane via `--parent-session-id`); older
+     versions used dedicated claude-swarm-* servers (killed whole, via
+     the nearest-claude ancestor pid or the @session-<prefix> tag).
   3. Sweep swarm servers with no window activity for
      FABLE_ORCH_SWARM_MAX_IDLE_H hours (default 48; 0 disables) —
      catches teams orphaned by crashed sessions. Dead sockets are
@@ -90,6 +90,19 @@ def _swarm_sockets():
         return []
 
 
+def _team_sockets():
+    """Every tmux socket that may host teammate panes. Current Claude
+    Code opens teammate panes inside the USER'S default tmux server;
+    only the pane filters decide what dies — a non-swarm server itself
+    is NEVER killed."""
+    try:
+        d = _swarm_dir()
+        return [os.path.join(d, n) for n in sorted(os.listdir(d))
+                if not n.startswith(".")]
+    except OSError:
+        return []
+
+
 def _tmux(sock, *args):
     return subprocess.run(
         ["tmux", "-S", sock, *args],
@@ -139,48 +152,83 @@ def _nearest_claude_ancestor(deadline, max_hops=12):
     return None
 
 
-def reap_own_swarm(session_id, deadline):
-    """Kill swarm servers hosting THIS session's teammates. Returns count.
+def _owns_pane(command, session_id):
+    """True when the pane's argv carries `--parent-session-id <EXACTLY
+    this id>`. Token-exact on purpose: substring matching would let
+    session "abc" claim — and kill — a teammate of session "abc-def"."""
+    toks = command.split()
+    for i, t in enumerate(toks[:-1]):
+        if t == "--parent-session-id":
+            return toks[i + 1] == str(session_id)
+    return False
 
-    Two matchers, either suffices:
-      1. Socket name claude-swarm-<pid> where <pid> is this hook's
-         NEAREST claude ancestor (the session's own main process — never
-         an outer session's) — version-proof.
-      2. Pane command tag @session-<prefix of this session id> — how older
-         Claude Code versions tagged teammates; current versions tag with
-         a per-team id, so this alone is no longer enough.
+
+def reap_own_swarm(session_id, deadline):
+    """Kill THIS session's teammates so they die with the session.
+
+    Three matchers:
+      1. Whole-server: socket claude-swarm-<pid> where <pid> is this
+         hook's NEAREST claude ancestor — legacy dedicated-server
+         layout; version-proof for it.
+      2. Whole-server: a claude-swarm-* server whose panes carry the
+         @session-<prefix> tag (older teammate tagging).
+      3. Pane-level, EVERY socket: panes whose command carries
+         `--parent-session-id <this session id>` — the current layout
+         parks teammates inside the USER'S default tmux server, so only
+         the matching PANES are killed there, never the server.
+    Returns the number of servers+panes killed.
     """
     own = _nearest_claude_ancestor(deadline)
     own_names = {f"claude-swarm-{own}"} if own else set()
-    marker = f"@session-{str(session_id)[:8]}" if session_id else None
+    tag = f"@session-{str(session_id)[:8]}" if session_id else None
     killed = 0
-    for sock in _swarm_sockets():
+    for sock in _team_sockets():
         if time.time() > deadline:
             break
+        is_swarm = os.path.basename(sock).startswith("claude-swarm-")
         try:
-            if os.path.basename(sock) in own_names:
+            if is_swarm and os.path.basename(sock) in own_names:
                 if _tmux(sock, "list-sessions").returncode == 0:
                     _tmux(sock, "kill-server")
                     killed += 1
                 continue
-            if not marker:
-                continue
-            r = _tmux(sock, "list-panes", "-a", "-F", "#{pane_pid}")
+            r = _tmux(sock, "list-panes", "-a", "-F", "#{pane_id} #{pane_pid}")
             if r.returncode != 0:
-                continue  # dead server; the sweep unlinks its socket
-            pids = ",".join(p for p in r.stdout.split() if p.isdigit())
-            if not pids:
+                continue  # dead server; the sweep unlinks swarm sockets
+            pane_by_pid = {}
+            for line in r.stdout.splitlines():
+                bits = line.split()
+                if len(bits) == 2 and bits[1].isdigit():
+                    pane_by_pid[bits[1]] = bits[0]
+            if not pane_by_pid:
                 continue
             if time.time() > deadline:
                 break
             ps = subprocess.run(
-                ["ps", "-o", "command=", "-p", pids],
+                ["ps", "-o", "pid=,command=", "-p", ",".join(pane_by_pid)],
                 capture_output=True, text=True, timeout=5,
             )
-            if marker in (ps.stdout or ""):
+            out = ps.stdout or ""
+            if is_swarm and tag and tag in out:
                 if time.time() > deadline:
                     break
                 _tmux(sock, "kill-server")
+                killed += 1
+                continue
+            if not session_id:
+                continue
+            for line in out.splitlines():
+                bits = line.split(None, 1)
+                if len(bits) < 2:
+                    continue
+                pid, command = bits
+                if pid not in pane_by_pid or "--agent-id" not in command:
+                    continue
+                if not _owns_pane(command, session_id):
+                    continue
+                if time.time() > deadline:
+                    break
+                _tmux(sock, "kill-pane", "-t", pane_by_pid[pid])
                 killed += 1
         except Exception:
             continue

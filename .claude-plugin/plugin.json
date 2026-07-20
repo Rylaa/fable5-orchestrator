@@ -1,7 +1,7 @@
 {
   "name": "orchestrator",
   "description": "Token-frugal multi-agent orchestration for Claude Code, built for a Claude Fable 5 chair: Fable plans and decides, Sonnet 5 carries implementation and routine judgment, and a two-tier verification/escalation valve guards the close. A Requirements Ledger and guard hooks enforce the discipline mechanically, and finished tmux teammates are reaped automatically.",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "author": {
     "name": "Yusuf Demirkoparan",
     "url": "https://github.com/Rylaa"

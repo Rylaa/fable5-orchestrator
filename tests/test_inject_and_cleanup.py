@@ -379,6 +379,62 @@ def test_nested_claude_does_not_kill_outer_swarm(tmp_path):
     assert "claude-swarm-500" not in text  # the outer session's team LIVES
 
 
+def test_session_end_kills_own_panes_in_default_server(tmp_path):
+    # Current layout: teammates are panes inside the USER'S default tmux
+    # server, tagged with --parent-session-id. SessionEnd must kill the
+    # session's own PANES there — and must NEVER kill-server a non-swarm
+    # socket.
+    import time
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    sock_dir = tmp_path / "tmuxroot" / f"tmux-{__import__('os').getuid()}"
+    default_sock = sock_dir / "default"
+    default_sock.write_text("", encoding="utf-8")
+    env["FAKE_PS_OUTPUT"] = (
+        "12345 claude --agent-id w@session-team1 --agent-name w "
+        "--parent-session-id s-own-full-id"
+    )
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))
+    assert run_hook(CLEANUP, {"session_id": "s-own-full-id"}, env_extra=env, tmpdir=tmp_path) is None
+    lines = kill_log.read_text(encoding="utf-8").splitlines() if kill_log.exists() else []
+    assert any("pane" in l and "default -t %1" in l for l in lines)
+    assert not any(l.strip() == str(default_sock) for l in lines)  # no kill-server on default
+
+
+def test_session_end_leaves_other_sessions_panes(tmp_path):
+    import time
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    sock_dir = tmp_path / "tmuxroot" / f"tmux-{__import__('os').getuid()}"
+    (sock_dir / "default").write_text("", encoding="utf-8")
+    env["FAKE_PS_OUTPUT"] = (
+        "12345 claude --agent-id w@session-team1 --agent-name w "
+        "--parent-session-id another-sessions-id"
+    )
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))
+    assert run_hook(CLEANUP, {"session_id": "s-own-full-id"}, env_extra=env, tmpdir=tmp_path) is None
+    log = kill_log.read_text(encoding="utf-8") if kill_log.exists() else ""
+    assert "default" not in log  # the other session's pane lives
+
+
+def test_session_id_prefix_collision_does_not_kill(tmp_path):
+    # Session "s-own" must not claim a teammate of "s-own-full-id":
+    # the --parent-session-id match is token-exact, not substring.
+    import time
+
+    env, kill_log = _swarm_fixture(tmp_path)
+    sock_dir = tmp_path / "tmuxroot" / f"tmux-{__import__('os').getuid()}"
+    (sock_dir / "default").write_text("", encoding="utf-8")
+    env["FAKE_PS_OUTPUT"] = (
+        "12345 claude --agent-id w@session-team1 --agent-name w "
+        "--parent-session-id s-own-full-id"
+    )
+    env["FAKE_WINDOW_ACTIVITY"] = str(int(time.time()))
+    assert run_hook(CLEANUP, {"session_id": "s-own"}, env_extra=env, tmpdir=tmp_path) is None
+    log = kill_log.read_text(encoding="utf-8") if kill_log.exists() else ""
+    assert "default" not in log
+
+
 def test_protocol_mismatch_socket_survives(tmp_path):
     # tmux binary upgraded mid-flight: the server answers rc=1 with
     # "protocol version mismatch" but is ALIVE — unlinking its socket
