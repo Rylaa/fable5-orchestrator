@@ -146,6 +146,24 @@ turn ends
 
 A fourth hook (`SessionEnd`) cleans up after the session: its temp files and **its tmux teammates**. The agent-teams backend parks teammates in tmux panes and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB; later, 9 panes parked for 11-30 hours) — on current Claude Code those panes sit inside **your own default tmux server**, on older versions in dedicated `claude-swarm-*` servers. The hook kills the session's own teammates wherever they live: the legacy `claude-swarm-<pid>` server whole (matched via the hook's nearest-claude ancestor or the `@session-<id>` pane tag), and on shared servers only the PANES carrying this session's `--parent-session-id` — a non-swarm server itself is never killed. Swarm servers idle 48h+ are swept too. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes idling below ~1% CPU for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 1). A parked teammate still burns a mailbox-polling heartbeat, so idleness is a sustained low RATE, not a frozen clock — working siblings re-baseline and survive. The injected profile adds the front line: the chair dismisses a teammate (`shutdown_request`) the moment its report is accepted.
 
+## Watching the team live
+
+Teammates are real `claude` processes in tmux panes — you can watch every agent think, call tools, and type in real time. Current Claude Code opens the panes inside **your own default tmux server**: if you launched `claude` from inside tmux, the team appears as extra panes right in your window (`prefix q` jumps between panes, `prefix z` zooms one to full screen, `prefix w` shows a session/window tree).
+
+```
+# who is on the field, by name
+ps -axo pid=,command= | grep -- --agent-id
+
+# every pane, mapped: session, pane id, pid, what it runs
+tmux list-panes -a -F '#{session_name} #{pane_id} #{pane_pid} #{pane_current_command}'
+
+# older Claude Code parked teams in dedicated servers — attach read-only
+ls /tmp/tmux-$UID | grep claude-swarm
+tmux -S /tmp/tmux-$UID/claude-swarm-<pid> attach -r
+```
+
+Watch, don't type: a teammate's pane is its working terminal, and stray input interferes with it — talk to agents through the lead session instead. The reaper keeps this view honest: dismissed and idle teammates disappear from the list instead of stacking up.
+
 ## Install
 
 ```
