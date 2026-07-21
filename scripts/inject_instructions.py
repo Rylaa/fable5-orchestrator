@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """SessionStart hook: inject the Dynamic Workflow instructions.
 
-This plugin is built for one chair: Claude Fable 5. Every session gets
-the single Fable-in-chair, token-frugal profile
-(instructions/dynamic-workflow-fable.md) — heavy delegation discipline
-that trades latency to preserve the usage limit of an ultra-scarce top
-tier, with Sonnet 5 carrying the work and a two-tier verification /
-escalation valve above it.
+This plugin is built for a Claude Fable 5 chair — with one fallback.
+The chair model is detected per session start:
+
+    opus chair      -> dynamic-workflow-opus.md   (the Fable limit is
+                       spent; same discipline, the fable tier rests,
+                       verification and the ceiling fall to opus)
+    anything else   -> dynamic-workflow-fable.md  (fable, unknown, or
+                       absent model — the primary profile)
+
+Detection uses the SessionStart payload's optional `model` field, the
+only hook event that carries it. A mid-session /model switch applies
+at the next session start (startup/resume/clear/compact).
 
 The hook also maintains the per-session marker file the Stop and
 SessionEnd hooks rely on: its immutable `started` timestamp survives
@@ -53,13 +59,19 @@ def main():
     if not isinstance(data, dict):
         data = {}
 
-    model = data.get("model")  # optional; informational only
+    model = data.get("model")  # optional; arrives only on SessionStart
     session_id = data.get("session_id")
+    if "opus" in str(model or "").lower():
+        profile = "opus"
+        filename = "dynamic-workflow-opus.md"
+    else:
+        profile = "fable"
+        filename = "dynamic-workflow-fable.md"
 
     root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))
     )
-    path = os.path.join(root, "instructions", "dynamic-workflow-fable.md")
+    path = os.path.join(root, "instructions", filename)
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
@@ -103,7 +115,7 @@ def main():
     except Exception:
         pass
 
-    _metric("inject", session_id, model=model)
+    _metric("inject", session_id, model=model, profile=profile)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",

@@ -11,13 +11,14 @@ def context_of(result):
     return result["hookSpecificOutput"]["additionalContext"]
 
 
-def test_profile_fits_the_injection_cap():
+def test_profiles_fit_the_injection_cap():
     # Claude Code caps hook output at 10,000 chars; anything over is
     # dumped to a file and the model sees only a 2KB preview — the
     # profile silently stops reaching the chair (this happened: v0.8.0
     # shipped at 10,069 chars). Keep a safety margin for the JSON wrapper.
-    text = (REPO / "instructions" / "dynamic-workflow-fable.md").read_text(encoding="utf-8")
-    assert len(text) < 9000, f"profile is {len(text)} chars — over the 9k safety margin"
+    for name in ("dynamic-workflow-fable.md", "dynamic-workflow-opus.md"):
+        text = (REPO / "instructions" / name).read_text(encoding="utf-8")
+        assert len(text) < 9000, f"{name} is {len(text)} chars — over the 9k safety margin"
 
 
 def test_injects_the_fable_profile(tmp_path):
@@ -35,8 +36,9 @@ def test_injects_the_fable_profile(tmp_path):
     assert "started" in data
 
 
-def test_any_model_gets_the_fable_profile(tmp_path):
-    # Fable-only plugin: the same profile is injected regardless of model.
+def test_non_opus_models_get_the_fable_profile(tmp_path):
+    # Fable-first: everything that isn't an opus chair (sonnet chairs
+    # included) gets the primary profile.
     result = run_hook(
         INJECT,
         {"model": "claude-sonnet-5", "session_id": "s-sonnet"},
@@ -44,6 +46,21 @@ def test_any_model_gets_the_fable_profile(tmp_path):
         tmpdir=tmp_path,
     )
     assert "(FABLE profile)" in context_of(result)
+
+
+def test_opus_chair_gets_the_opus_fallback_profile(tmp_path):
+    # The Fable limit ran dry and the chair restarted on Opus 4.8: the
+    # matching profile keeps the same discipline with the fable tier
+    # resting.
+    result = run_hook(
+        INJECT,
+        {"model": "claude-opus-4-8", "session_id": "s-opus"},
+        env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
+        tmpdir=tmp_path,
+    )
+    text = context_of(result)
+    assert "(OPUS profile)" in text
+    assert "(FABLE profile)" not in text
 
 
 def test_missing_model_still_injects(tmp_path):
@@ -86,6 +103,7 @@ def test_metrics_written_when_enabled(tmp_path):
     rec = json.loads(log.read_text(encoding="utf-8").strip().splitlines()[0])
     assert rec["event"] == "inject"
     assert rec["model"] == "claude-fable-5"
+    assert rec["profile"] == "fable"
 
 
 def test_metrics_optout(tmp_path):
