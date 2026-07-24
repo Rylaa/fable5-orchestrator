@@ -63,6 +63,80 @@ def test_opus_chair_gets_the_opus_fallback_profile(tmp_path):
     assert "(FABLE profile)" not in text
 
 
+# --- chair detection chain: override > payload > settings > marker > fable ---
+
+def _write_settings(tmp_path, model):
+    """Seed the sandboxed Claude config (run_hook points CLAUDE_CONFIG_DIR here)."""
+    cfg = tmp_path / "cfg"
+    cfg.mkdir(exist_ok=True)
+    (cfg / "settings.json").write_text(json.dumps({"model": model}), encoding="utf-8")
+
+
+def _inject(tmp_path, payload, **env):
+    env.setdefault("CLAUDE_PLUGIN_ROOT", str(REPO))
+    return run_hook(INJECT, payload, env_extra=env, tmpdir=tmp_path)
+
+
+def test_null_payload_falls_back_to_settings_opus(tmp_path):
+    # The real bug: SessionStart omits `model` on some fires. The user's
+    # configured default (/model wrote "opus[1m]" to settings.json) must
+    # still select the OPUS profile instead of defaulting to fable.
+    _write_settings(tmp_path, "opus[1m]")
+    assert "(OPUS profile)" in context_of(_inject(tmp_path, {"session_id": "s1"}))
+
+
+def test_null_payload_falls_back_to_settings_fable(tmp_path):
+    _write_settings(tmp_path, "claude-fable-5")
+    assert "(FABLE profile)" in context_of(_inject(tmp_path, {"session_id": "s2"}))
+
+
+def test_payload_model_beats_settings(tmp_path):
+    # Payload is authoritative for THIS session start; settings is only a
+    # fallback for when the payload omits the model.
+    _write_settings(tmp_path, "claude-fable-5")
+    r = _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s3"})
+    assert "(OPUS profile)" in context_of(r)
+
+
+def test_env_override_opus_beats_fable_payload(tmp_path):
+    r = _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s4"},
+                FABLE_ORCH_PROFILE="opus")
+    assert "(OPUS profile)" in context_of(r)
+
+
+def test_env_override_fable_beats_opus_payload(tmp_path):
+    r = _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s5"},
+                FABLE_ORCH_PROFILE="fable")
+    assert "(FABLE profile)" in context_of(r)
+
+
+def test_env_override_auto_falls_through_to_detection(tmp_path):
+    r = _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s6"},
+                FABLE_ORCH_PROFILE="auto")
+    assert "(OPUS profile)" in context_of(r)
+
+
+def test_marker_keeps_opus_sticky_on_null_payload(tmp_path):
+    # First injection sees opus -> marker records it. A later null-payload
+    # resume (no settings) must stay opus, not regress to fable, and must
+    # not overwrite the remembered model with null.
+    _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s7"})
+    marker = tmp_path / "fable-orch-model-s7.json"
+    assert json.loads(marker.read_text())["model"] == "claude-opus-4-8"
+    assert "(OPUS profile)" in context_of(_inject(tmp_path, {"session_id": "s7"}))
+    assert json.loads(marker.read_text())["model"] == "claude-opus-4-8"
+
+
+def test_inject_metric_records_detection_source(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_settings(tmp_path, "opus[1m]")
+    _inject(tmp_path, {"session_id": "s8"}, HOME=str(home), FABLE_ORCH_METRICS="1")
+    rec = json.loads((home / ".claude" / "fable-orch" / "metrics.jsonl")
+                     .read_text().splitlines()[0])
+    assert rec["profile"] == "opus" and rec["source"] == "settings"
+
+
 def test_missing_model_still_injects(tmp_path):
     result = run_hook(
         INJECT,

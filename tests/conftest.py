@@ -19,6 +19,8 @@ STRIP_ENV = [
     "FABLE_ORCH_SWARM_MAX_IDLE_H",
     "FABLE_ORCH_TEAMMATE_IDLE_H",
     "FABLE_ORCH_TEAMMATE_IDLE_RATE",
+    "FABLE_ORCH_PROFILE",
+    "CLAUDE_CONFIG_DIR",
     "TMUX_TMPDIR",
     "CLAUDE_PLUGIN_ROOT",
 ]
@@ -34,6 +36,11 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
     env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
     env["FABLE_ORCH_METRICS"] = "0"        # keep tests from writing ~/.claude metrics
     env["FABLE_ORCH_SWARM_CLEANUP"] = "0"  # keep tests away from real tmux servers
+    # Point Claude Code config at an (empty) sandbox dir so the injector's
+    # settings.json model-detection never reads the developer's real
+    # default. A test that wants the settings fallback writes
+    # <tmpdir>/cfg/settings.json; others get no model key -> no leak.
+    env["CLAUDE_CONFIG_DIR"] = str(Path(tmpdir) / "cfg") if tmpdir else "/nonexistent-fable-orch-cfg"
     if tmpdir is not None:
         env["TMPDIR"] = str(tmpdir)
         env["TEMP"] = str(tmpdir)

@@ -79,7 +79,9 @@ A SessionStart hook injects the Fable-in-chair profile ([`instructions/dynamic-w
 
 The profile routes subagents by tier name (`sonnet`, `opus`, `fable`), keeps bulk material on disk (`./.workflow/scratch/` — the chair receives briefs and verdicts, never dumps), and runs every delegated agent at `max` effort — savings come from the tier, never from dialing effort down. Context-heavy follow-ups go to a **fork** (`subagent_type: "fork"`), which inherits the full conversation with no spec-writing tax.
 
-**When the Fable limit runs dry**, restart the chair on Opus 4.8 (`/model`): the injector detects the chair and injects the matching OPUS profile ([`instructions/dynamic-workflow-opus.md`](instructions/dynamic-workflow-opus.md)) — same discipline, the fable tier rests, fresh-eyes verification and the escalation ceiling fall to a fresh Opus agent. Detection happens at each session start (startup/resume/clear/compact); a mid-session `/model` switch applies at the next one. Any other chair (a Sonnet session included) gets the Fable profile.
+**When the Fable limit runs dry**, move the chair to Opus 4.8 (`/model`): the injector serves the matching OPUS profile ([`instructions/dynamic-workflow-opus.md`](instructions/dynamic-workflow-opus.md)) — same discipline, the fable tier rests, fresh-eyes verification and the escalation ceiling fall to a fresh Opus agent. Opus is a drop-in chair: it orchestrates exactly as Fable did, only Opus now sits in the seat.
+
+Detection runs at each session start, in priority order: an explicit `FABLE_ORCH_PROFILE=fable|opus` pin, then the SessionStart payload's model, then **the default model `/model` wrote to `settings.json`** (so an Opus default is honored even when the harness omits the payload model on a resume/compact — the case that used to fall back to Fable), then the last model this session saw. A mid-session `/model` switch still only takes effect at the next session start (SessionStart is the only injection point) — but the settings fallback makes that next start reliable. To pin the chair regardless of detection, set `FABLE_ORCH_PROFILE=opus` while you ride out the Fable limit, `fable` (or unset) when it resets.
 
 ### 2 · A Requirements Ledger
 
@@ -223,6 +225,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ Env var                       │ Default            │ Meaning                                    │
 ├───────────────────────────────┼────────────────────┼────────────────────────────────────────────┤
 │ LEDGER_GUARD_THRESHOLD        │ 1500               │ spawn-guard gate (chars)                   │
+│ FABLE_ORCH_PROFILE            │ auto               │ pin the chair profile: auto | fable | opus │
 │ LEDGER_GUARD_TASKS            │ 3                  │ 3rd ledgerless tracker task denied; 0 off  │
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking      │
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging           │
@@ -250,7 +253,7 @@ The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as 
 - Hooks check ledger **existence and checkbox state**, not fidelity — a shallow ledger passes; writing a faithful one stays a judgment task.
 - Freshness is only half-checked: a fully-closed ledger from a previous session re-arms the gates, but a stale ledger with OPEN items still satisfies them (it looks like active work).
 - Marking `- [x]` without actually verifying is possible; mechanizing further would invite ritual compliance.
-- Chair detection knows two chairs: Fable (primary) and Opus (limit fallback). Any other session model gets the Fable profile, and the 1500-char spawn gate applies everywhere.
+- Chair detection knows two chairs: Fable (primary) and Opus (limit fallback). Any other session model gets the Fable profile, and the 1500-char spawn gate applies everywhere. A mid-session `/model` switch only re-profiles at the next session start — `FABLE_ORCH_PROFILE=opus` pins it immediately for the next fires.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
 - Pane idleness is a CPU-rate heuristic: a teammate parked below ~1% CPU for the idle window is reaped, so one blocked for hours inside a single quiet external wait (a long remote build) can be killed mid-wait — raise `FABLE_ORCH_TEAMMATE_IDLE_H`, lower `FABLE_ORCH_TEAMMATE_IDLE_RATE`, or disable with `FABLE_ORCH_TEAMMATE_IDLE_H=0` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
 - The task guard counts tracker tasks, not work size: a solo multi-phase session that never creates tasks still slips through, and the deny is a single nudge per session, not a wall.
